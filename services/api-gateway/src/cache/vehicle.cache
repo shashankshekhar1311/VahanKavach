@@ -1,0 +1,35 @@
+import Redis from 'ioredis';
+import { StandardVehicleCompliance, ChallanItem } from '../types/vehicle';
+
+export class VehicleCacheService {
+  private redis: Redis;
+
+  constructor() {
+    this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+  }
+
+  private rcKey(reg: string) { return `vahan:rc:${reg.toUpperCase()}`; }
+  private challanKey(reg: string) { return `vahan:challan:${reg.toUpperCase()}`; }
+
+  async getCachedRC(reg: string): Promise<StandardVehicleCompliance | null> {
+    const data = await this.redis.get(this.rcKey(reg));
+    return data ? JSON.parse(data) : null;
+  }
+
+  async setCachedRC(reg: string, data: StandardVehicleCompliance): Promise<void> {
+    await this.redis.set(this.rcKey(reg), JSON.stringify(data), 'EX', 86400); // 24 Hours
+  }
+
+  async getCachedChallans(reg: string): Promise<ChallanItem[] | null> {
+    const data = await this.redis.get(this.challanKey(reg));
+    return data ? JSON.parse(data) : null;
+  }
+
+  async setCachedChallans(reg: string, challans: ChallanItem[]): Promise<void> {
+    await this.redis.set(this.challanKey(reg), JSON.stringify(challans), 'EX', 21600); // 6 Hours
+  }
+
+  async invalidate(reg: string): Promise<void> {
+    await this.redis.del(this.rcKey(reg), this.challanKey(reg));
+  }
+}

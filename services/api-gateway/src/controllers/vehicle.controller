@@ -1,0 +1,40 @@
+import { Request, Response } from 'express';
+import { VehicleService } from '../services/vehicle.service';
+import { SurepassProvider } from '../providers/surepass.provider';
+import { VehicleCacheService } from '../cache/vehicle.cache';
+
+const vehicleService = new VehicleService(
+  new SurepassProvider(),
+  new VehicleCacheService()
+);
+
+export async function syncVehicleHandler(req: Request, res: Response) {
+  try {
+    const { regNumber, forceRefresh } = req.body;
+
+    if (!regNumber || typeof regNumber !== 'string') {
+      return res.status(400).json({ success: false, error: 'Registration number is required.' });
+    }
+
+    const data = await vehicleService.getCompleteVehicleProfile(regNumber, Boolean(forceRefresh));
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...data,
+        summary: {
+          pendingChallanCount: data.challans.filter((c) => c.status === 'UNPAID').length,
+          totalChallanAmount: data.challans
+            .filter((c) => c.status === 'UNPAID')
+            .reduce((sum, c) => sum + c.amount, 0),
+          pucStatus: data.vehicle.puc.isValid ? 'VALID' : 'EXPIRED',
+        },
+      },
+    });
+  } catch (error: any) {
+    return res.status(422).json({
+      success: false,
+      error: error.message || 'Failed to sync vehicle compliance data',
+    });
+  }
+}
