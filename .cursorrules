@@ -1,0 +1,16 @@
+# VahanKavach Project Rules
+
+## Architecture & Tech Stack
+- Primary Backend & DB: Supabase (PostgreSQL, Supabase Auth, Row Level Security, pg_cron)
+- API Hosting: Supabase Edge Functions (Deno runtime, TypeScript)
+- External Integrations: Meta WhatsApp Cloud API (Graph v21+), VAHAN / E-Challan Provider (Surepass/Setu adapter pattern)
+- Validation: Zod for schema validation
+- Client SDK: @supabase/supabase-js
+
+## Coding Standards
+- Strictly enforce TypeScript types; avoid `any`.
+- Write Supabase Edge Functions inside `supabase/functions/<function-name>/index.ts`.
+- In Edge Functions, use `https://esm.sh/@supabase/supabase-js@2` and standard Deno HTTP server `Deno.serve`.
+- Always implement Row Level Security (RLS) policies for user isolation (tenant isolation by `auth.uid()`).
+- Handle all Indian vehicle registration sanitization (strip hyphens/spaces, uppercase, regex validate `^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$`).
+- Return standard JSON responses: `{ success: boolean, data?: any, error?: string }`.

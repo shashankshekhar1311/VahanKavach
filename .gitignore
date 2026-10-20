@@ -1,7 +1,24 @@
 node_modules/
 dist/
+.next/
 .env
 .env.local
 *.log
 coverage/
 .DS_Store
+apps/web/.env.local
+
+# Android
+apps/android/local.properties
+apps/android/.gradle/
+apps/android/.kotlin/
+apps/android/**/build/
+apps/android/*.iml
+apps/android/.idea/
+apps/android/**/*.apk
+apps/android/**/*.aab
+
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+supabase/functions/.env

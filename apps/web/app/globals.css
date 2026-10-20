@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+:root {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --safety: #10b981;
+  --emergency: #ef4444;
+  --amber-warn: #f59e0b;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-safety: var(--safety);
+  --color-emergency: var(--emergency);
+  --color-amber-warn: var(--amber-warn);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.pt-safe {
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+
+@keyframes drawer-up {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-drawer-up {
+  animation: drawer-up 0.28s ease-out;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 1.4s ease-in-out infinite;
+}
+
+@keyframes scanner {
+  0% {
+    background-position: 0% 0%;
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 0.35;
+  }
+  100% {
+    background-position: 0% 100%;
+    opacity: 0.15;
+  }
+}
+
+.scanner-pulse {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    color-mix(in srgb, var(--safety) 35%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 100% 200%;
+  animation: scanner 1.2s linear infinite;
+  border-radius: inherit;
+}
+
+/* Subtle radial atmosphere — not flat black */
+.bg-atmosphere {
+  background-color: #09090b;
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(16, 185, 129, 0.12), transparent),
+    radial-gradient(ellipse 60% 40% at 100% 100%, rgba(239, 68, 68, 0.06), transparent);
+}
