@@ -1,0 +1,18 @@
+{
+  "name": "vahankavach-staging",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "VahanKavach sandbox / staging workspace (project rygvtxqbhgteqgvmczxu)",
+  "scripts": {
+    "verify:sandbox": "tsx scripts/verify-sandbox.ts",
+    "setup:sandbox-secrets": "bash scripts/setup-sandbox-secrets.sh",
+    "web:dev": "npm --prefix apps/web run dev",
+    "web:build": "npm --prefix apps/web run build"
+  },
+  "devDependencies": {
+    "@supabase/supabase-js": "^2.118.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.2"
+  }
+}

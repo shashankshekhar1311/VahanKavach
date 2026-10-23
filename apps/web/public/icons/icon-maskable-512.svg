@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="VahanKavach">
+  <!-- Maskable: safe-zone padding. Private brand only  not a government imitation. -->
+  <rect width="512" height="512" fill="#09090b"/>
+  <path d="M256 96 L392 148 V268 C392 352 328 404 256 428 C184 404 120 352 120 268 V148 Z"
+        fill="#064e3b" stroke="#10b981" stroke-width="8"/>
+  <text x="256" y="292" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif"
+        font-size="120" font-weight="700" fill="#ecfdf5">VK</text>
+</svg>

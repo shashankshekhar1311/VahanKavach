@@ -1,0 +1,50 @@
+import { IVehicleDataProvider, StandardVehicleCompliance, ChallanItem } from '../types/vehicle';
+import { VehicleCacheService } from '../cache/vehicle.cache';
+
+export class VehicleService {
+  constructor(
+    private provider: IVehicleDataProvider,
+    private cache: VehicleCacheService
+  ) {}
+
+  // Sanitizes Indian registration numbers (e.g., "ka-01 ab 1234" -> "KA01AB1234")
+  private sanitizeRegNumber(reg: string): string {
+    const sanitized = reg.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
+    const regPattern = /^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$/;
+    if (!regPattern.test(sanitized)) {
+      throw new Error(`Invalid Indian vehicle registration format: ${reg}`);
+    }
+    return sanitized;
+  }
+
+  async getCompleteVehicleProfile(regNumber: string, forceRefresh = false): Promise<{
+    vehicle: StandardVehicleCompliance;
+    challans: ChallanItem[];
+    source: 'CACHE' | 'UPSTREAM';
+  }> {
+    const reg = this.sanitizeRegNumber(regNumber);
+
+    if (!forceRefresh) {
+      const [cachedRC, cachedChallans] = await Promise.all([
+        this.cache.getCachedRC(reg),
+        this.cache.getCachedChallans(reg),
+      ]);
+
+      if (cachedRC && cachedChallans) {
+        return { vehicle: cachedRC, challans: cachedChallans, source: 'CACHE' };
+      }
+    }
+
+    // Parallel fetch from upstream provider
+    const vehicle = await this.provider.getVehicleDetails(reg);
+    const challans = await this.provider.getPendingChallans(reg, vehicle.chassisLast5);
+
+    // Write back to cache asynchronously
+    await Promise.all([
+      this.cache.setCachedRC(reg, vehicle),
+      this.cache.setCachedChallans(reg, challans),
+    ]);
+
+    return { vehicle, challans, source: 'UPSTREAM' };
+  }
+}
