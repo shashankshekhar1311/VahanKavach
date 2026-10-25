@@ -1,8 +1,10 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Mail, Shield, Smartphone } from "lucide-react";
+
 import { supabase } from "@/lib/supabase";
 import {
   formatMobileInput,
@@ -20,7 +22,8 @@ function isValidEmail(raw: string): boolean {
 
 export function PhoneAuthForm() {
   const router = useRouter();
-  const [channel, setChannel] = useState<Channel>("email");
+  /** Prefer phone OTP (Fast2SMS hook); email remains available as fallback. */
+  const [channel, setChannel] = useState<Channel>("phone");
   const [step, setStep] = useState<Step>("identity");
   const [phoneDisplay, setPhoneDisplay] = useState("");
   const [email, setEmail] = useState("");
@@ -83,7 +86,10 @@ export function PhoneAuthForm() {
     }
 
     setBusy(true);
-    const { error: otpError } = await supabase.auth.signInWithOtp({ phone });
+    const { error: otpError } = await supabase.auth.signInWithOtp({
+      phone,
+      options: { shouldCreateUser: true },
+    });
     setBusy(false);
 
     if (otpError) {
@@ -184,6 +190,12 @@ export function PhoneAuthForm() {
         <p className="mt-2 text-sm text-zinc-400">
           Your Automated Vehicle Shield
         </p>
+        <Link
+          href="/demo"
+          className="mt-3 inline-block text-xs font-medium text-safety underline-offset-2 hover:underline"
+        >
+          Watch 30s demo →
+        </Link>
       </div>
 
       {step === "identity" ? (

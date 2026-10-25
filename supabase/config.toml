@@ -259,13 +259,21 @@ otp_expiry = 3600
 
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
-enable_signup = false
+enable_signup = true
 # If enabled, users need to confirm their phone number before signing in.
+# Keep false so OTP is required; Send SMS Hook delivers the code via Fast2SMS.
 enable_confirmations = false
-# Template for sending OTP to users
-template = "Your code is {{ .Code }}"
+# Template for sending OTP to users (used by built-in providers; hook uses sms.otp).
+template = "Your VahanKavach code is {{ .Code }}"
 # Controls the minimum amount of time that must pass before sending another sms otp.
 max_frequency = "5s"
+
+# Hosted: also enable Phone provider + Send SMS Hook in Dashboard → Authentication.
+# Local / self-host: point this at the Edge Function (requires SEND_SMS_HOOK_SECRET).
+# [auth.hook.send_sms]
+# enabled = true
+# uri = "http://host.docker.internal:54321/functions/v1/send-sms-hook"
+# secrets = "env(SEND_SMS_HOOK_SECRET)"
 
 # Use pre-defined map of phone number to OTP for testing.
 # [auth.sms.test_otp]
@@ -424,10 +432,11 @@ verify_jwt = true
 # Path is relative to the supabase/ directory (CLI resolves this for edge-runtime).
 entrypoint = "./functions/sync-vehicle/index.ts"
 # Local secrets (also set via supabase secrets set in hosted projects):
-#   USE_MOCK_PROVIDER=true|false
-#   SUREPASS_API_TOKEN=...
-#   SUREPASS_BASE_URL=https://kyc-api.surepass.io/api/v1
-#   SUREPASS_TIMEOUT_MS=10000
+#   VEHICLE_PROVIDER_MODE=MOCK|SUREPASS_PROD|SETU_PROD
+#   USE_MOCK_PROVIDER=true|false (legacy → MOCK)
+#   SUREPASS_API_TOKEN=... / SUREPASS_BASE_URL / SUREPASS_TIMEOUT_MS
+#   SETU_CLIENT_ID / SETU_CLIENT_SECRET / SETU_BASE_URL / SETU_TIMEOUT_MS
+
 
 # Module 3: Meta WhatsApp Cloud API webhook (no JWT — Meta cannot send one)
 [functions.whatsapp-webhook]
@@ -465,3 +474,60 @@ entrypoint = "./functions/telegram-webhook/index.ts"
 #   TELEGRAM_BOT_TOKEN
 #   TELEGRAM_WEBHOOK_SECRET (optional X-Telegram-Bot-Api-Secret-Token)
 #   APP_BASE_URL (optional)
+
+# Billing: prepaid ~₹1/day/vehicle checkout
+[functions.create-billing-checkout]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/create-billing-checkout/index.ts"
+# Secrets: RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, BILLING_MOCK, BILLING_PAISE_PER_VEHICLE_MONTH
+
+[functions.razorpay-webhook]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/razorpay-webhook/index.ts"
+# Secrets: RAZORPAY_WEBHOOK_SECRET
+# Handles Kavach Pro public.orders + per-vehicle payment_attempts
+
+# Kavach Pro annual pass (₹249/year)
+[functions.create-order]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/create-order/index.ts"
+# Secrets: RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, BILLING_MOCK
+
+[functions.verify-order]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/verify-order/index.ts"
+# Secrets: RAZORPAY_KEY_SECRET
+
+[functions.record-challan-payment]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/record-challan-payment/index.ts"
+
+# DPDP: self-serve account + data erasure
+[functions.delete-account]
+enabled = true
+verify_jwt = true
+entrypoint = "./functions/delete-account/index.ts"
+# Requires SUPABASE_SERVICE_ROLE_KEY (Admin API deleteUser)
+
+# Module 5: production health probe (no JWT — uptime / deploy smoke)
+[functions.health]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/health/index.ts"
+# Secrets: SUPABASE_SERVICE_ROLE_KEY; VEHICLE_PROVIDER_MODE / SUREPASS_* / SETU_*
+
+# Auth Send SMS Hook → Fast2SMS (no JWT; Auth calls this before a session exists)
+[functions.send-sms-hook]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/send-sms-hook/index.ts"
+# Secrets:
+#   FAST2SMS_API_KEY
+#   SEND_SMS_HOOK_SECRET (optional but recommended: v1,whsec_… from Auth Hooks UI)
+
+
