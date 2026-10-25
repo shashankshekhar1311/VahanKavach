@@ -2,7 +2,7 @@
 # https://supabase.com/docs/guides/local-development/cli/config
 # A string used to distinguish different Supabase projects on the same host. Defaults to the
 # working directory name when running `supabase init`.
-project_id = "VahanKavach-Staging"
+project_id = "VahanKavach"
 
 [api]
 enabled = true
@@ -259,13 +259,21 @@ otp_expiry = 3600
 
 [auth.sms]
 # Allow/disallow new user signups via SMS to your project.
-enable_signup = false
+enable_signup = true
 # If enabled, users need to confirm their phone number before signing in.
+# Keep false so OTP is required; Send SMS Hook delivers the code via Fast2SMS.
 enable_confirmations = false
-# Template for sending OTP to users
-template = "Your code is {{ .Code }}"
+# Template for sending OTP to users (used by built-in providers; hook uses sms.otp).
+template = "Your VahanKavach code is {{ .Code }}"
 # Controls the minimum amount of time that must pass before sending another sms otp.
 max_frequency = "5s"
+
+# Hosted: also enable Phone provider + Send SMS Hook in Dashboard → Authentication.
+# Local / self-host: point this at the Edge Function (requires SEND_SMS_HOOK_SECRET).
+# [auth.hook.send_sms]
+# enabled = true
+# uri = "http://host.docker.internal:54321/functions/v1/send-sms-hook"
+# secrets = "env(SEND_SMS_HOOK_SECRET)"
 
 # Use pre-defined map of phone number to OTP for testing.
 # [auth.sms.test_otp]
@@ -512,5 +520,14 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/health/index.ts"
 # Secrets: SUPABASE_SERVICE_ROLE_KEY; VEHICLE_PROVIDER_MODE / SUREPASS_* / SETU_*
+
+# Auth Send SMS Hook → Fast2SMS (no JWT; Auth calls this before a session exists)
+[functions.send-sms-hook]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/send-sms-hook/index.ts"
+# Secrets:
+#   FAST2SMS_API_KEY
+#   SEND_SMS_HOOK_SECRET (optional but recommended: v1,whsec_… from Auth Hooks UI)
 
 
