@@ -1,6 +1,7 @@
 "use client";
 
-import { LogOut, MapPin } from "lucide-react";
+import Link from "next/link";
+import { LogOut, MapPin, Settings } from "lucide-react";
 import type { NotificationChannel, Profile } from "@/lib/types";
 import { formatPhoneDisplay } from "@/lib/format";
 
@@ -8,6 +9,7 @@ interface DashboardHeaderProps {
   profile: Profile | null;
   onSignOut: () => void;
 }
+
 
 function channelLabel(channel: NotificationChannel | undefined): string {
   switch (channel) {
@@ -37,6 +39,14 @@ export function DashboardHeader({ profile, onSignOut }: DashboardHeaderProps) {
           <h1 className="truncate text-base font-semibold text-zinc-50">
             {name}
           </h1>
+          {profile?.is_pro ? (
+            <span
+              className="shrink-0 rounded-md border border-safety/40 bg-safety/15 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-safety"
+              title="Kavach Pro annual pass active"
+            >
+              Pro
+            </span>
+          ) : null}
         </div>
         <p className="mt-0.5 flex min-w-0 items-center gap-1.5 truncate text-[11px] text-zinc-500">
           <MapPin className="h-3 w-3 shrink-0 text-zinc-600" aria-hidden />
@@ -68,6 +78,13 @@ export function DashboardHeader({ profile, onSignOut }: DashboardHeaderProps) {
           </span>
           {channel}
         </span>
+        <Link
+          href="/settings"
+          className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+          aria-label="Settings"
+        >
+          <Settings className="h-4 w-4" />
+        </Link>
         <button
           type="button"
           onClick={onSignOut}

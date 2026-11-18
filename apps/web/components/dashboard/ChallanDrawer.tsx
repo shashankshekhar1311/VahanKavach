@@ -16,12 +16,14 @@ import {
   getParivahanPortalUrl,
   openPayment,
 } from "@/lib/upi";
+import { supabase } from "@/lib/supabase";
 
 interface ChallanDrawerProps {
   open: boolean;
   onClose: () => void;
   vehicle: Vehicle | null;
   challans: Challan[];
+  onPaidExternally?: () => void;
 }
 
 export function ChallanDrawer({
@@ -29,9 +31,24 @@ export function ChallanDrawer({
   onClose,
   vehicle,
   challans,
+  onPaidExternally,
 }: ChallanDrawerProps) {
   const unpaid = challans.filter((c) => c.status === "UNPAID");
   const total = unpaid.reduce((sum, c) => sum + Number(c.amount), 0);
+
+  async function recordRedirect(challanId: string, markPaid = false) {
+    if (!vehicle) return;
+    const portal = getParivahanPortalUrl();
+    await supabase.functions.invoke("record-challan-payment", {
+      body: {
+        challanId,
+        vehicleId: vehicle.id,
+        portalUrl: portal,
+        markPaidExternally: markPaid,
+      },
+    });
+    if (markPaid) onPaidExternally?.();
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -150,12 +167,14 @@ export function ChallanDrawer({
           <div className="space-y-2 border-t border-zinc-800 px-4 py-4">
             <button
               type="button"
-              onClick={() =>
+              onClick={() => {
+                const first = unpaid[0];
+                if (first) void recordRedirect(first.id, false);
                 openPayment({
                   amount: total,
                   note: `Challan ${vehicle.reg_number} ×${unpaid.length}`,
-                })
-              }
+                });
+              }}
               className="flex w-full items-center justify-center gap-2 rounded-xl bg-safety px-4 py-3.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 active:scale-[0.98]"
             >
               <IndianRupee className="h-4 w-4" />
@@ -165,11 +184,25 @@ export function ChallanDrawer({
               href={getParivahanPortalUrl()}
               target="_blank"
               rel="noopener noreferrer"
+              onClick={() => {
+                const first = unpaid[0];
+                if (first) void recordRedirect(first.id, false);
+              }}
               className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 px-4 py-2.5 text-xs font-medium text-zinc-300 transition hover:bg-zinc-800"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Pay on Parivahan portal
             </a>
+            <button
+              type="button"
+              onClick={() => {
+                const first = unpaid[0];
+                if (first) void recordRedirect(first.id, true);
+              }}
+              className="w-full text-center text-[11px] text-zinc-500 underline-offset-2 hover:text-zinc-300 hover:underline"
+            >
+              I already paid — mark as paid externally
+            </button>
             <p className="break-all text-center text-[10px] text-zinc-600">
               {buildUpiDeepLink({
                 amount: total,

@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -22,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
@@ -123,8 +125,10 @@ fun GarageScreen(viewModel: GarageViewModel) {
             item {
                 QuickAdd(
                     regInput = state.regInput,
+                    chassisInput = state.chassisInput,
                     busy = state.protecting,
-                    onChange = viewModel::onRegInputChange,
+                    onRegChange = viewModel::onRegInputChange,
+                    onChassisChange = viewModel::onChassisInputChange,
                     onProtect = viewModel::protectVehicle,
                 )
             }
@@ -222,6 +226,9 @@ fun GarageScreen(viewModel: GarageViewModel) {
                         item = item,
                         refreshing = state.refreshingReg == item.vehicle.regNumber,
                         onRefresh = { viewModel.refreshVehicle(item.vehicle.regNumber) },
+                        onRelease = {
+                            viewModel.releaseVehicle(item.vehicle.id, item.vehicle.regNumber)
+                        },
                     )
                 }
             }
@@ -258,35 +265,56 @@ private fun CompactChannelChip(channel: NotificationChannel, linked: Boolean) {
 @Composable
 private fun QuickAdd(
     regInput: String,
+    chassisInput: String,
     busy: Boolean,
-    onChange: (String) -> Unit,
+    onRegChange: (String) -> Unit,
+    onChassisChange: (String) -> Unit,
     onProtect: () -> Unit,
 ) {
-    Row(
+    Column(
         Modifier
             .fillMaxWidth()
             .background(Zinc900, RoundedCornerShape(12.dp))
             .border(1.dp, Zinc800, RoundedCornerShape(12.dp))
             .padding(8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        OutlinedTextField(
-            value = formatRegDisplay(regInput),
-            onValueChange = onChange,
-            modifier = Modifier.weight(1f),
-            placeholder = { Text("KA 01 AB 1234") },
-            singleLine = true,
-            enabled = !busy,
-        )
-        Button(
-            onClick = onProtect,
-            modifier = Modifier.height(52.dp),
-            enabled = !busy,
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Zinc950)
-            else Text("Protect", fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = formatRegDisplay(regInput),
+                onValueChange = onRegChange,
+                modifier = Modifier.weight(1f),
+                placeholder = { Text("KA 01 AB 1234") },
+                singleLine = true,
+                enabled = !busy,
+            )
+            OutlinedTextField(
+                value = chassisInput,
+                onValueChange = onChassisChange,
+                modifier = Modifier.width(96.dp),
+                placeholder = { Text("×5") },
+                label = { Text("Chassis") },
+                singleLine = true,
+                enabled = !busy,
+            )
+            Button(
+                onClick = onProtect,
+                modifier = Modifier.height(52.dp),
+                enabled = !busy && chassisInput.length == 5,
+            ) {
+                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Zinc950)
+                else Text("Protect", fontWeight = FontWeight.SemiBold)
+            }
         }
+        Text(
+            "Ownership proof: last 5 of chassis from RC (mock KA01AB1234 → A1B2C).",
+            color = Zinc400,
+            style = MaterialTheme.typography.labelSmall,
+        )
     }
 }
 
@@ -396,6 +424,7 @@ private fun VehicleCard(
     item: VehicleWithChallans,
     refreshing: Boolean,
     onRefresh: () -> Unit,
+    onRelease: () -> Unit,
 ) {
     val v = item.vehicle
     val insuranceDays = daysUntil(v.insuranceExpiryDate)
@@ -421,9 +450,14 @@ private fun VehicleCard(
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
-            IconButton(onClick = onRefresh, enabled = !refreshing) {
-                if (refreshing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Safety)
-                else Icon(Icons.Default.Refresh, "Refresh", tint = Zinc400)
+            Row {
+                IconButton(onClick = onRefresh, enabled = !refreshing) {
+                    if (refreshing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = Safety)
+                    else Icon(Icons.Default.Refresh, "Refresh", tint = Zinc400)
+                }
+                IconButton(onClick = onRelease, enabled = !refreshing) {
+                    Icon(Icons.Default.LinkOff, "Release vehicle", tint = Zinc400)
+                }
             }
         }
 

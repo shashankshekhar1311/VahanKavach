@@ -13,6 +13,9 @@ import type {
   IVehicleDataProvider,
   StandardVehicleCompliance,
 } from '../types.ts';
+import { contactComplianceFromRcData } from './contact-compliance.ts';
+import { maskSecrets, safeLog, withRetryAndCircuit } from './resilience.ts';
+
 
 const DEFAULT_BASE_URL = 'https://kyc-api.surepass.io/api/v1';
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -91,10 +94,12 @@ export class SurepassProvider implements IVehicleDataProvider {
   }
 
   async getVehicleDetails(regNumber: string): Promise<StandardVehicleCompliance> {
-    const json = await this.postJson<{ data?: SurepassRcPayload }>(
-      '/rc/rc-full',
-      { id_number: regNumber },
+    const json = await withRetryAndCircuit('surepass', () =>
+      this.postJson<{ data?: SurepassRcPayload }>('/rc/rc-full', {
+        id_number: regNumber,
+      }),
     );
+
 
     const data = json.data;
     if (!data) {
@@ -138,6 +143,9 @@ export class SurepassProvider implements IVehicleDataProvider {
       fitness: {
         validUpto: data.fit_dt ? new Date(data.fit_dt).toISOString() : null,
       },
+      contactCompliance: contactComplianceFromRcData(
+        data as unknown as Record<string, unknown>,
+      ),
     };
   }
 
@@ -145,12 +153,15 @@ export class SurepassProvider implements IVehicleDataProvider {
     regNumber: string,
     chassisLast5?: string,
   ): Promise<ChallanItem[]> {
-    const json = await this.postJson<{
-      data?: { challans?: SurepassChallanRaw[] };
-    }>('/challan/challan-details', {
-      vehicle_number: regNumber,
-      chassis_number: chassisLast5,
-    });
+    const json = await withRetryAndCircuit('surepass', () =>
+      this.postJson<{
+        data?: { challans?: SurepassChallanRaw[] };
+      }>('/challan/challan-details', {
+        vehicle_number: regNumber,
+        chassis_number: chassisLast5,
+      }),
+    );
+
 
     const rawChallans = json.data?.challans ?? [];
     return rawChallans
@@ -210,9 +221,17 @@ export class SurepassProvider implements IVehicleDataProvider {
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
+        const safeBody = String(maskSecrets(text.slice(0, 200)));
+        safeLog('surepass request failed', {
+          path,
+          status: response.status,
+          body: safeBody,
+        });
         throw new ProviderHttpError(
-          `Surepass request failed (${response.status}): ${text.slice(0, 200) || response.statusText}`,
-          502,
+          `Surepass request failed (${response.status}): ${
+            safeBody || response.statusText
+          }`,
+          response.status === 504 ? 504 : 502,
           response.status,
         );
       }
@@ -224,10 +243,13 @@ export class SurepassProvider implements IVehicleDataProvider {
         throw new ProviderHttpError(
           `Surepass request timed out after ${this.timeoutMs}ms.`,
           504,
+          504,
         );
       }
       throw new ProviderHttpError(
-        `Surepass network error: ${err instanceof Error ? err.message : String(err)}`,
+        `Surepass network error: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
         502,
       );
     } finally {
@@ -235,3 +257,4 @@ export class SurepassProvider implements IVehicleDataProvider {
     }
   }
 }
+

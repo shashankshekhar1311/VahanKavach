@@ -21,6 +21,14 @@ export type ChallanDbStatus =
   | 'PAID_VIA_APP'
   | 'DISPUTED';
 
+/** RC mobile / Aadhaar seeding status from VAHAN / provider payloads. */
+export interface ContactCompliance {
+  mobileLinked: boolean;
+  aadhaarLinked: boolean;
+  maskedMobile?: string;
+  warningNotice?: string;
+}
+
 export interface StandardVehicleCompliance {
   regNumber: string;
   chassisLast5?: string;
@@ -43,6 +51,8 @@ export interface StandardVehicleCompliance {
   fitness: {
     validUpto: string | null;
   };
+  /** RC contact seeding audit (mobile + Aadhaar). Defaults to linked when omitted at call sites. */
+  contactCompliance: ContactCompliance;
   fastagStatus?: string | null;
   fastagBank?: string | null;
 }

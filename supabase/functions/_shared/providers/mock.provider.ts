@@ -1,6 +1,6 @@
 /**
  * Deterministic mock provider for local / CI testing.
- * Enabled when USE_MOCK_PROVIDER="true".
+ * Enabled when USE_MOCK_PROVIDER="true" or VEHICLE_PROVIDER=MOCK.
  */
 
 import type {
@@ -8,6 +8,11 @@ import type {
   IVehicleDataProvider,
   StandardVehicleCompliance,
 } from '../types.ts';
+import {
+  linkedContactCompliance,
+  RC_CONTACT_WARNING_NOTICE,
+  unlinkedContactCompliance,
+} from './contact-compliance.ts';
 
 function isoDaysFromNow(days: number): string {
   const d = new Date();
@@ -38,21 +43,68 @@ const FIXTURES: Record<
       registrationDate: '2019-06-15',
       puc: {
         isValid: true,
-        validUpto: isoDaysFromNow(3),
-        daysRemaining: 3,
+        validUpto: isoDaysFromNow(180),
+        daysRemaining: 180,
         pucNumber: 'KA-PUC-991122',
       },
       insurance: {
         isValid: true,
-        validUpto: isoDaysFromNow(180),
+        validUpto: isoDaysFromNow(365),
         companyName: 'ICICI Lombard',
         policyNumber: 'IL-POL-778899',
       },
       fitness: { validUpto: null },
+      contactCompliance: linkedContactCompliance({ maskedMobile: '98******21' }),
       fastagStatus: 'ACTIVE',
       fastagBank: 'HDFC Bank',
     },
     challans: [],
+  },
+  KA02CD5678: {
+    vehicle: {
+      regNumber: 'KA02CD5678',
+      chassisLast5: 'C3D4E',
+      engineLast5: 'M3N4P',
+      makerModel: 'Hyundai Creta',
+      fuelType: 'DIESEL',
+      registrationDate: '2021-03-22',
+      puc: {
+        isValid: false,
+        validUpto: isoDaysFromNow(-5),
+        daysRemaining: -5,
+        pucNumber: 'KA-PUC-445566',
+      },
+      insurance: {
+        isValid: true,
+        validUpto: isoDaysFromNow(90),
+        companyName: 'Bajaj Allianz',
+        policyNumber: 'BA-POL-112233',
+      },
+      fitness: { validUpto: isoDaysFromNow(200) },
+      contactCompliance: unlinkedContactCompliance(RC_CONTACT_WARNING_NOTICE),
+      fastagStatus: 'ACTIVE',
+      fastagBank: 'ICICI Bank',
+    },
+    challans: [
+      {
+        challanNumber: 'KA02CD5678ANPR001',
+        amount: 1000,
+        violationDate: isoDaysFromNow(-12),
+        violationType: 'Over-speeding',
+        location: 'ANPR Camera — Outer Ring Road, Bengaluru',
+        status: 'UNPAID',
+        evidenceUrl: 'https://example.com/evidence/ka02cd5678-overspeed.jpg',
+      },
+      {
+        challanNumber: 'KA02CD5678ANPR002',
+        amount: 500,
+        violationDate: isoDaysFromNow(-4),
+        violationType: 'Signal jump',
+        location: 'ANPR Camera — MG Road Junction, Bengaluru',
+        status: 'UNPAID',
+        evidenceUrl: 'https://example.com/evidence/ka02cd5678-signal.jpg',
+      },
+    ],
   },
   MH12CD5678: {
     vehicle: {
@@ -75,6 +127,7 @@ const FIXTURES: Record<
         policyNumber: 'BA-POL-112233',
       },
       fitness: { validUpto: isoDaysFromNow(400) },
+      contactCompliance: linkedContactCompliance(),
       fastagStatus: 'LOW_BALANCE',
       fastagBank: 'ICICI Bank',
     },
@@ -101,37 +154,70 @@ const FIXTURES: Record<
   DL01EF9012: {
     vehicle: {
       regNumber: 'DL01EF9012',
-      chassisLast5: 'Q7W6E',
+      chassisLast5: 'E5F6G',
       engineLast5: 'R5T4Y',
       makerModel: 'Tata Nexon EV',
       fuelType: 'ELECTRIC',
       registrationDate: '2023-01-10',
       puc: {
-        isValid: false,
-        validUpto: isoDaysFromNow(-15),
-        daysRemaining: 0,
+        isValid: true,
+        validUpto: isoDaysFromNow(3),
+        daysRemaining: 3,
         pucNumber: 'DL-PUC-000111',
       },
       insurance: {
-        isValid: false,
-        validUpto: isoDaysFromNow(-5),
+        isValid: true,
+        validUpto: isoDaysFromNow(120),
         companyName: 'HDFC Ergo',
         policyNumber: 'HE-POL-998877',
       },
       fitness: { validUpto: isoDaysFromNow(200) },
-      fastagStatus: 'INACTIVE',
+      contactCompliance: linkedContactCompliance({ maskedMobile: '99******12' }),
+      fastagStatus: 'ACTIVE',
       fastagBank: 'SBI',
     },
     challans: [
       {
-        challanNumber: 'DL01EF9012U001',
-        amount: 1000,
+        challanNumber: 'DL01EF9012PK001',
+        amount: 500,
         violationDate: isoDaysFromNow(-30),
-        violationType: 'No Parking',
+        violationType: 'Parking',
         location: 'Connaught Place, New Delhi',
         status: 'UNPAID',
       },
     ],
+  },
+  BR06XY9999: {
+    vehicle: {
+      regNumber: 'BR06XY9999',
+      chassisLast5: 'B1H2R',
+      engineLast5: 'M9Z8Q',
+      makerModel: 'Hero Splendor Plus',
+      fuelType: 'PETROL',
+      registrationDate: '2018-11-04',
+      puc: {
+        isValid: true,
+        validUpto: isoDaysFromNow(90),
+        daysRemaining: 90,
+        pucNumber: 'BR-PUC-778899',
+      },
+      insurance: {
+        isValid: true,
+        validUpto: isoDaysFromNow(200),
+        companyName: 'New India Assurance',
+        policyNumber: 'NIA-POL-445566',
+      },
+      fitness: { validUpto: isoDaysFromNow(365) },
+      contactCompliance: {
+        mobileLinked: false,
+        aadhaarLinked: false,
+        warningNotice:
+          'Muzaffarpur / Bihar enforcement: Mobile and Aadhaar not seeded in VAHAN. ₹1,000 fine risk.',
+      },
+      fastagStatus: 'ACTIVE',
+      fastagBank: 'SBI',
+    },
+    challans: [],
   },
 };
 
@@ -145,9 +231,11 @@ function refreshComputedFields(
 
   return {
     ...vehicle,
+    contactCompliance:
+      vehicle.contactCompliance ?? linkedContactCompliance(),
     puc: {
       ...vehicle.puc,
-      daysRemaining: Math.max(0, pucDays),
+      daysRemaining: pucDays,
       isValid: pucDays > 0,
     },
     insurance: {
@@ -182,6 +270,7 @@ function defaultFixture(regNumber: string): {
         policyNumber: 'MOCK-POL-0001',
       },
       fitness: { validUpto: null },
+      contactCompliance: linkedContactCompliance(),
       fastagStatus: 'ACTIVE',
       fastagBank: 'Mock Bank',
     },
@@ -191,7 +280,6 @@ function defaultFixture(regNumber: string): {
 
 export class MockVehicleProvider implements IVehicleDataProvider {
   async getVehicleDetails(regNumber: string): Promise<StandardVehicleCompliance> {
-    // Simulate realistic upstream latency.
     await delay(40);
     const fixture = FIXTURES[regNumber] ?? defaultFixture(regNumber);
     return refreshComputedFields(structuredClone(fixture.vehicle));

@@ -30,11 +30,32 @@ export interface Profile {
   signal_number: string | null;
 }
 
+/** Owner prepaid plan (Kavach Pro ₹399/vehicle/year). */
+export interface Subscription {
+  id: string;
+  user_id: string;
+  status: "trial" | "active" | "past_due" | "cancelled" | "expired";
+  trial_ends_at: string | null;
+  current_period_end: string | null;
+  vehicle_qty: number;
+  amount_paise_per_vehicle: number;
+}
+
+export interface VehicleEntitlement {
+  vehicle_id: string;
+  user_id: string;
+  active_until: string;
+  source: "trial" | "subscription" | "admin_grant";
+}
+
 export interface Vehicle {
   id: string;
   user_id: string;
   reg_number: string;
+  /** Last 5 only — never full chassis/VIN. */
   chassis_last_5: string | null;
+  /** Last 5 only — never full engine number. */
+  engine_last_5: string | null;
   maker_model: string | null;
   fuel_type: FuelType | null;
   puc_expiry_date: string | null;
@@ -43,6 +64,25 @@ export interface Vehicle {
   fastag_status: string | null;
   fastag_bank: string | null;
   last_polled_at: string | null;
+  /** RC seeded with active mobile in VAHAN. */
+  rc_mobile_linked?: boolean | null;
+  /** RC seeded with Aadhaar in VAHAN. */
+  rc_aadhaar_linked?: boolean | null;
+  /** Derived amber warning: mobile or Aadhaar not seeded (₹1,000 fine risk). */
+  rc_contact_warning?: boolean | null;
+  contact_audit_notified?: boolean | null;
+}
+
+/** DPDP consent audit row (user-readable). */
+export interface ConsentAuditLog {
+  id: string;
+  user_id: string;
+  vehicle_id: string;
+  purpose: string;
+  consent_text_version: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  granted_at: string;
 }
 
 export interface Challan {

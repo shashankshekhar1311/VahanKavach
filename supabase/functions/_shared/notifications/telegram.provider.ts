@@ -13,6 +13,7 @@ import {
   type INotificationProvider,
   type InlineUrlButton,
   type NotificationSendResult,
+  type RcContactWarningPayload,
 } from './types.ts';
 
 export class TelegramProviderError extends Error {
@@ -35,6 +36,18 @@ function requireBotToken(): string {
   return token;
 }
 
+function isStagingEnvironment(): boolean {
+  const env = (Deno.env.get('ENVIRONMENT') ?? Deno.env.get('APP_ENV') ?? '')
+    .trim()
+    .toLowerCase();
+  return env === 'staging' || env === 'sandbox' || env === 'dev';
+}
+
+/** Staging prefix appended to all outgoing Telegram alert bodies. */
+export function sandboxAlertPrefix(): string {
+  return isStagingEnvironment() ? '[SANDBOX TEST ALERT]\n\n' : '';
+}
+
 function buildHtmlBody(payload: ComplianceAlertPayload): string {
   const greeting = payload.ownerName
     ? `Hi ${escapeHtml(payload.ownerName)},`
@@ -46,21 +59,23 @@ function buildHtmlBody(payload: ComplianceAlertPayload): string {
     ? `Valid until: ${escapeHtml(formatDateInIst(payload.pucExpiryDate))}`
     : 'Valid until: unknown';
 
+  const label = payload.alertLabel?.trim() || 'PUC';
   let headline: string;
   if (payload.urgency === 'EXPIRED') {
-    headline = '🔴 <b>PUC Expired Today</b>';
+    headline = `🔴 <b>${escapeHtml(label)} Expired Today</b>`;
   } else if (payload.urgency === 'T1') {
-    headline = '🟠 <b>Urgent: PUC expires tomorrow</b>';
+    headline = `🟠 <b>Urgent: ${escapeHtml(label)} expires tomorrow</b>`;
   } else {
-    headline = `🟡 <b>PUC Expiring Soon</b> — ${payload.daysLeft} days left`;
+    headline = `🟡 <b>${escapeHtml(label)} Expiring Soon</b> — ${payload.daysLeft} days left`;
   }
 
   const action =
     payload.urgency === 'EXPIRED'
-      ? 'Renew your PUC immediately before driving to avoid fines and vehicle detention.'
-      : 'Please renew your Pollution Under Control certificate before it expires.';
+      ? `Renew your ${label} immediately before driving to avoid fines and vehicle detention.`
+      : `Please renew your ${label} before it expires.`;
 
   return [
+    sandboxAlertPrefix(),
     greeting,
     '',
     headline,
@@ -73,7 +88,9 @@ function buildHtmlBody(payload: ComplianceAlertPayload): string {
     `⚠️ ${escapeHtml(PUC_LEGAL_WARNING_PLAIN)}`,
     '',
     '<i>VahanKavach proactive alert</i>',
-  ].join('\n');
+  ]
+    .filter((line, idx) => !(idx === 0 && line === ''))
+    .join('\n');
 }
 
 function buildInlineKeyboard(
@@ -94,11 +111,139 @@ function buildInlineKeyboard(
   };
 }
 
+function buildRcContactWarningHtml(payload: RcContactWarningPayload): string {
+  const notice = payload.warningNotice
+    ? `\n\n<i>${escapeHtml(payload.warningNotice)}</i>`
+    : '';
+  const model = payload.makerModel
+    ? ` (${escapeHtml(payload.makerModel)})`
+    : '';
+
+  return [
+    sandboxAlertPrefix(),
+    '⚠️ <b>VahanKavach Security Warning: Unlinked RC Detected</b>',
+    '',
+    `🚗 <b>Vehicle:</b> ${escapeHtml(payload.regNumber)}${model}`,
+    '',
+    '• <b>Status:</b> Mobile number / Aadhaar not linked in official VAHAN records.',
+    '• <b>Risk:</b> Transport Department ₹1,000 penalty + silent traffic fines going to court summons.',
+    '',
+    '👉 <i>Update your mobile number in 2 minutes on the official MoRTH portal:</i>',
+    notice,
+  ]
+    .filter((line, idx) => !(idx === 0 && line === ''))
+    .join('\n');
+}
+
+async function telegramApiSendMessage(
+  chatId: string,
+  text: string,
+  buttons?: InlineUrlButton[],
+): Promise<NotificationSendResult> {
+  const token = requireBotToken();
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
+  const body: Record<string, unknown> = {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
+  };
+  if (buttons && buttons.length > 0) {
+    body.reply_markup = {
+      inline_keyboard: [buttons.map((b) => ({ text: b.text, url: b.url }))],
+    };
+  }
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const raw: unknown = await res.json().catch(() => null);
+
+  if (!res.ok) {
+    console.error('Telegram sendMessage error', res.status, raw);
+    throw new TelegramProviderError(
+      `Telegram API request failed (${res.status})`,
+      res.status,
+      raw,
+    );
+  }
+
+  const ok =
+    typeof raw === 'object' &&
+    raw !== null &&
+    'ok' in raw &&
+    (raw as { ok: unknown }).ok === true;
+
+  if (!ok) {
+    throw new TelegramProviderError(
+      'Telegram API returned ok=false',
+      502,
+      raw,
+    );
+  }
+
+  const messageId =
+    typeof raw === 'object' &&
+    raw !== null &&
+    'result' in raw &&
+    typeof (raw as { result?: { message_id?: unknown } }).result?.message_id ===
+      'number'
+      ? String((raw as { result: { message_id: number } }).result.message_id)
+      : null;
+
+  return { channel: 'TELEGRAM', messageId, raw };
+}
+
 export class TelegramNotificationProvider implements INotificationProvider {
   readonly channel = 'TELEGRAM' as const;
 
   async sendComplianceAlert(
     payload: ComplianceAlertPayload,
+  ): Promise<NotificationSendResult> {
+    if (payload.alertType === 'RC_CONTACT_WARNING') {
+      return this.sendRcContactWarning({
+        userId: payload.userId,
+        ownerName: payload.ownerName,
+        regNumber: payload.regNumber,
+        makerModel: payload.makerModel,
+        phoneNumber: payload.phoneNumber,
+        telegramChatId: payload.telegramChatId,
+        signalNumber: payload.signalNumber,
+        updateUrl:
+          payload.renewUrl ??
+          'https://vahan.parivahan.gov.in/mobileupdate/',
+      });
+    }
+
+    const chatId = payload.telegramChatId?.trim();
+    if (!chatId) {
+      throw new TelegramProviderError(
+        'telegram_chat_id is missing; link Telegram via /start <token> first',
+        422,
+      );
+    }
+
+    const buttons: InlineUrlButton[] = [];
+    if (payload.renewUrl) {
+      buttons.push({ text: 'Renew PUC', url: payload.renewUrl });
+    }
+    if (payload.payUrl) {
+      buttons.push({ text: 'Pay Challans', url: payload.payUrl });
+    }
+
+    return telegramApiSendMessage(
+      chatId,
+      buildHtmlBody(payload),
+      buttons.length > 0 ? buttons : undefined,
+    );
+  }
+
+  async sendRcContactWarning(
+    payload: RcContactWarningPayload,
   ): Promise<NotificationSendResult> {
     const chatId = payload.telegramChatId?.trim();
     if (!chatId) {
@@ -108,61 +253,12 @@ export class TelegramNotificationProvider implements INotificationProvider {
       );
     }
 
-    const token = requireBotToken();
-    const url = `https://api.telegram.org/bot${token}/sendMessage`;
-    const replyMarkup = buildInlineKeyboard(payload);
-
-    const body: Record<string, unknown> = {
-      chat_id: chatId,
-      text: buildHtmlBody(payload),
-      parse_mode: 'HTML',
-      disable_web_page_preview: true,
-    };
-    if (replyMarkup) {
-      body.reply_markup = replyMarkup;
-    }
-
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    const raw: unknown = await res.json().catch(() => null);
-
-    if (!res.ok) {
-      console.error('Telegram sendMessage error', res.status, raw);
-      throw new TelegramProviderError(
-        `Telegram API request failed (${res.status})`,
-        res.status,
-        raw,
-      );
-    }
-
-    const ok =
-      typeof raw === 'object' &&
-      raw !== null &&
-      'ok' in raw &&
-      (raw as { ok: unknown }).ok === true;
-
-    if (!ok) {
-      throw new TelegramProviderError(
-        'Telegram API returned ok=false',
-        502,
-        raw,
-      );
-    }
-
-    const messageId =
-      typeof raw === 'object' &&
-      raw !== null &&
-      'result' in raw &&
-      typeof (raw as { result?: { message_id?: unknown } }).result?.message_id ===
-        'number'
-        ? String((raw as { result: { message_id: number } }).result.message_id)
-        : null;
-
-    return { channel: this.channel, messageId, raw };
+    return telegramApiSendMessage(chatId, buildRcContactWarningHtml(payload), [
+      {
+        text: '🌐 Update on Parivahan',
+        url: payload.updateUrl || 'https://vahan.parivahan.gov.in/mobileupdate/',
+      },
+    ]);
   }
 }
 
@@ -171,13 +267,19 @@ export async function telegramSendText(
   chatId: string,
   htmlText: string,
   buttons?: InlineUrlButton[],
+  options?: { skipSandboxPrefix?: boolean },
 ): Promise<NotificationSendResult> {
   const token = requireBotToken();
   const url = `https://api.telegram.org/bot${token}/sendMessage`;
 
+  const text =
+    options?.skipSandboxPrefix || !isStagingEnvironment()
+      ? htmlText
+      : `${sandboxAlertPrefix()}${htmlText}`;
+
   const body: Record<string, unknown> = {
     chat_id: chatId,
-    text: htmlText,
+    text,
     parse_mode: 'HTML',
     disable_web_page_preview: true,
   };

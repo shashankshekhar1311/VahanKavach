@@ -25,6 +25,7 @@ data class GarageUiState(
     val profile: Profile? = null,
     val vehicles: List<VehicleWithChallans> = emptyList(),
     val regInput: String = "",
+    val chassisInput: String = "",
     val banner: String? = null,
     val error: String? = null,
     val channelBusy: Boolean = false,
@@ -44,6 +45,11 @@ class GarageViewModel(
 
     fun onRegInputChange(raw: String) {
         _state.update { it.copy(regInput = sanitizeRegInput(raw).take(11), error = null) }
+    }
+
+    fun onChassisInputChange(raw: String) {
+        val cleaned = raw.uppercase().replace(Regex("[^A-Z0-9]"), "").take(5)
+        _state.update { it.copy(chassisInput = cleaned, error = null) }
     }
 
     fun refresh() {
@@ -76,10 +82,22 @@ class GarageViewModel(
             _state.update { it.copy(error = "Enter a valid Indian registration (e.g. KA01AB1234)") }
             return
         }
+        val chassis = _state.value.chassisInput
+        if (chassis.length != 5) {
+            _state.update {
+                it.copy(error = "Enter the last 5 characters of the chassis number from your RC")
+            }
+            return
+        }
         viewModelScope.launch {
             _state.update { it.copy(protecting = true, error = null, banner = null) }
             try {
-                val result = garage.syncVehicle(stored, forceRefresh = false)
+                val result = garage.syncVehicle(
+                    stored,
+                    forceRefresh = false,
+                    mode = "claim",
+                    chassisLast5 = chassis,
+                )
                 if (!result.success) {
                     throw IllegalStateException(result.error ?: "sync-vehicle failed")
                 }
@@ -89,13 +107,41 @@ class GarageViewModel(
                         protecting = false,
                         vehicles = vehicles,
                         regInput = "",
-                        banner = "Vehicle protected — compliance synced.",
+                        chassisInput = "",
+                        banner = "Vehicle claimed and protected — compliance synced.",
                     )
                 }
             } catch (e: Exception) {
+                val msg = e.message ?: "Protect failed"
                 _state.update {
-                    it.copy(protecting = false, error = e.message ?: "Protect failed")
+                    it.copy(
+                        protecting = false,
+                        error = msg,
+                        banner = if (msg.contains("Payment required", ignoreCase = true)) {
+                            "Subscribe on the web garage (₹399/year per vehicle), then claim again."
+                        } else {
+                            it.banner
+                        },
+                    )
                 }
+            }
+        }
+    }
+
+    fun releaseVehicle(vehicleId: String, regNumber: String) {
+        viewModelScope.launch {
+            _state.update { it.copy(error = null, banner = null) }
+            try {
+                garage.releaseVehicle(vehicleId)
+                val vehicles = garage.fetchGarage()
+                _state.update {
+                    it.copy(
+                        vehicles = vehicles,
+                        banner = "$regNumber released. A new owner can claim it with chassis proof.",
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(error = e.message ?: "Release failed") }
             }
         }
     }
@@ -104,7 +150,11 @@ class GarageViewModel(
         viewModelScope.launch {
             _state.update { it.copy(refreshingReg = regNumber, error = null, banner = null) }
             try {
-                val result = garage.syncVehicle(regNumber, forceRefresh = true)
+                val result = garage.syncVehicle(
+                    regNumber,
+                    forceRefresh = true,
+                    mode = "refresh",
+                )
                 if (!result.success) {
                     throw IllegalStateException(result.error ?: "sync-vehicle failed")
                 }
@@ -129,7 +179,11 @@ class GarageViewModel(
             _state.update { it.copy(loading = true, error = null, banner = null) }
             try {
                 for (item in _state.value.vehicles) {
-                    val result = garage.syncVehicle(item.vehicle.regNumber, forceRefresh = true)
+                    val result = garage.syncVehicle(
+                        item.vehicle.regNumber,
+                        forceRefresh = true,
+                        mode = "refresh",
+                    )
                     if (!result.success) {
                         throw IllegalStateException(result.error ?: "sync-vehicle failed")
                     }

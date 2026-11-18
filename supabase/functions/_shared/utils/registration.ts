@@ -2,9 +2,12 @@
  * Indian vehicle registration sanitization & validation.
  *
  * Accepts common user input like "ka-01 ab 1234" and normalizes to "KA01AB1234".
+ * Pattern aligned with `_shared/security.ts` (strict CERT/project rule).
  */
 
-const REG_PATTERN = /^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$/;
+import { INDIAN_REG_STRICT_PATTERN } from '../security.ts';
+
+const REG_PATTERN = INDIAN_REG_STRICT_PATTERN;
 
 export class InvalidRegistrationError extends Error {
   readonly status = 400;

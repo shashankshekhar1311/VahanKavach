@@ -1,238 +1,294 @@
 "use client";
 
-import { RefreshCw, Fuel } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  AlertTriangle,
+  Car,
+  CheckCircle2,
+  ExternalLink,
+  MoreVertical,
+  RefreshCw,
+  Unlink,
+} from "lucide-react";
 import type { Challan, Vehicle } from "@/lib/types";
 import { formatRegDisplay } from "@/lib/registration";
 import { formatInr } from "@/lib/format";
 import { daysUntil, pucLevel } from "@/lib/puc";
 import { Spinner } from "@/components/ui/Spinner";
+import { RCLinkingModal } from "@/components/RCLinkingModal";
 
 interface VehicleCardProps {
   vehicle: Vehicle;
   challans: Challan[];
   refreshing?: boolean;
+  releasing?: boolean;
   onRefresh: (regNumber: string) => void;
+  onRelease: (vehicle: Vehicle) => void;
   onViewChallans: (vehicle: Vehicle) => void;
 }
 
-const FUEL_STYLES: Record<string, string> = {
-  PETROL: "bg-amber-500/15 text-amber-300 ring-amber-500/30",
-  DIESEL: "bg-orange-500/15 text-orange-300 ring-orange-500/30",
-  CNG: "bg-sky-500/15 text-sky-300 ring-sky-500/30",
-  ELECTRIC: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30",
-  HYBRID: "bg-teal-500/15 text-teal-300 ring-teal-500/30",
-  OTHER: "bg-zinc-500/15 text-zinc-300 ring-zinc-500/30",
-};
-
-type Tone = "ok" | "warn" | "bad" | "muted";
-
-function toneFromDays(days: number | null): Tone {
-  if (days === null) return "muted";
-  const level = pucLevel(days);
-  if (level === "green") return "ok";
-  if (level === "amber") return "warn";
-  return "bad";
-}
-
-function toneClasses(tone: Tone): { cell: string; value: string; dot: string } {
-  switch (tone) {
-    case "ok":
-      return {
-        cell: "border-safety/20 bg-safety/5",
-        value: "text-safety",
-        dot: "bg-safety",
-      };
-    case "warn":
-      return {
-        cell: "border-amber-warn/25 bg-amber-warn/5",
-        value: "text-amber-warn",
-        dot: "bg-amber-warn",
-      };
-    case "bad":
-      return {
-        cell: "border-emergency/25 bg-emergency/5",
-        value: "text-emergency",
-        dot: "bg-emergency",
-      };
-    default:
-      return {
-        cell: "border-zinc-800 bg-zinc-950/40",
-        value: "text-zinc-400",
-        dot: "bg-zinc-600",
-      };
-  }
-}
-
-function shortExpiry(dateIso: string | null): string {
-  if (!dateIso) return "—";
+function formatLongDate(dateIso: string | null): string | null {
+  if (!dateIso) return null;
   const d = new Date(`${dateIso.slice(0, 10)}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return null;
   return d.toLocaleDateString("en-IN", {
     day: "numeric",
     month: "short",
+    year: "numeric",
   });
 }
 
-function daysHint(days: number | null): string {
-  if (days === null) return "N/A";
-  if (days < 0) return `${Math.abs(days)}d late`;
-  if (days === 0) return "Today";
-  return `${days}d`;
+/** Fill 0–1 for PUC validity bar (demo-style). */
+function pucBarFill(days: number | null): number {
+  if (days === null) return 0;
+  if (days <= 0) return 0.06;
+  return Math.min(1, Math.max(0.12, days / 180));
 }
 
-function MetricCell({
-  label,
-  value,
-  hint,
-  tone,
-  onClick,
-}: {
+function pucBadge(days: number | null): {
   label: string;
-  value: string;
-  hint: string;
-  tone: Tone;
-  onClick?: () => void;
-}) {
-  const styles = toneClasses(tone);
-  const className = `flex min-w-0 flex-col items-center gap-0.5 rounded-lg border px-1 py-2 text-center transition ${styles.cell} ${
-    onClick ? "hover:brightness-110 active:scale-[0.98]" : ""
-  }`;
-  const body = (
-    <>
-      <span className="flex items-center gap-1 text-[9px] font-semibold uppercase tracking-wide text-zinc-500">
-        <span className={`h-1 w-1 rounded-full ${styles.dot}`} aria-hidden />
-        {label}
-      </span>
-      <span
-        className={`w-full truncate text-[11px] font-semibold leading-tight ${styles.value}`}
-        title={value}
-      >
-        {value}
-      </span>
-      <span className="truncate text-[9px] text-zinc-500">{hint}</span>
-    </>
-  );
-  if (onClick) {
-    return (
-      <button type="button" onClick={onClick} className={className}>
-        {body}
-      </button>
-    );
+  className: string;
+} {
+  const level = pucLevel(days);
+  if (days === null) {
+    return {
+      label: "PUC N/A",
+      className: "border-zinc-600 text-zinc-400",
+    };
   }
-  return (
-    <div className={className} role="listitem">
-      {body}
-    </div>
-  );
+  if (level === "green") {
+    return {
+      label: "PUC VALID",
+      className: "border-safety/50 text-safety",
+    };
+  }
+  if (level === "amber") {
+    return {
+      label: "PUC SOON",
+      className: "border-amber-warn/50 text-amber-warn",
+    };
+  }
+  return {
+    label: "PUC EXPIRED",
+    className: "border-emergency/50 text-emergency",
+  };
+}
+
+function barColor(days: number | null): string {
+  const level = pucLevel(days);
+  if (level === "green") return "bg-safety";
+  if (level === "amber") return "bg-amber-warn";
+  if (days === null) return "bg-zinc-600";
+  return "bg-emergency";
 }
 
 export function VehicleCard({
   vehicle,
   challans,
   refreshing = false,
+  releasing = false,
   onRefresh,
+  onRelease,
   onViewChallans,
 }: VehicleCardProps) {
   const unpaid = challans.filter((c) => c.status === "UNPAID");
   const pendingCount = unpaid.length;
   const totalAmount = unpaid.reduce((s, c) => s + Number(c.amount), 0);
-  const fuelClass =
-    FUEL_STYLES[vehicle.fuel_type ?? "OTHER"] ?? FUEL_STYLES.OTHER;
-
-  const insuranceDays = daysUntil(vehicle.insurance_expiry_date);
   const pucDays = daysUntil(vehicle.puc_expiry_date);
-  const fitnessDays = daysUntil(vehicle.fitness_expiry_date);
-  const challanTone: Tone =
-    pendingCount > 0 ? "bad" : challans.length === 0 ? "muted" : "ok";
+  const insuranceDays = daysUntil(vehicle.insurance_expiry_date);
+  const badge = pucBadge(pucDays);
+  const fill = pucBarFill(pucDays);
+  const pucUntil = formatLongDate(vehicle.puc_expiry_date);
+  const title = vehicle.maker_model?.trim() || "Vehicle";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [rcModalOpen, setRcModalOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const showRcContactWarning = Boolean(vehicle.rc_contact_warning);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onDoc(e: MouseEvent) {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
 
   return (
     <article
-      className={`rounded-2xl border border-zinc-800 bg-zinc-900/80 p-3 shadow-lg shadow-black/20 transition duration-300 ${
+      className={`rounded-2xl border border-zinc-800/80 bg-zinc-900/90 p-4 shadow-lg shadow-black/25 transition duration-300 ${
         refreshing ? "animate-pulse-soft ring-1 ring-safety/40" : ""
       }`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold text-zinc-50">
-            {vehicle.maker_model ?? "Unknown vehicle"}
-          </h3>
-          <p className="mt-0.5 font-mono text-xs tracking-wide text-zinc-400">
-            {formatRegDisplay(vehicle.reg_number)}
-          </p>
+      {/* Top: icon + identity + menu */}
+      <div className="flex items-start gap-3">
+        <div
+          className="flex h-14 w-14 shrink-0 items-center justify-center rounded-xl border border-zinc-700/80 bg-zinc-950"
+          aria-hidden
+        >
+          <Car className="h-7 w-7 text-zinc-500" strokeWidth={1.5} />
         </div>
-        <div className="flex items-center gap-1.5">
-          {vehicle.fuel_type && (
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="truncate text-base font-semibold tracking-tight text-zinc-50">
+                {title}
+              </h3>
+              <p className="mt-0.5 font-mono text-sm font-medium tracking-wide text-safety">
+                {formatRegDisplay(vehicle.reg_number)}
+              </p>
+            </div>
+
+            <div className="relative shrink-0" ref={menuRef}>
+              <button
+                type="button"
+                onClick={() => setMenuOpen((o) => !o)}
+                disabled={refreshing || releasing}
+                className="rounded-lg p-1.5 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200 disabled:opacity-50"
+                aria-label="Vehicle actions"
+                aria-expanded={menuOpen}
+              >
+                {releasing || refreshing ? (
+                  <Spinner className="h-4 w-4" />
+                ) : (
+                  <MoreVertical className="h-4 w-4" />
+                )}
+              </button>
+              {menuOpen ? (
+                <div className="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-xl border border-zinc-700 bg-zinc-950 py-1 shadow-xl">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-zinc-200 hover:bg-zinc-900"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onRefresh(vehicle.reg_number);
+                    }}
+                  >
+                    <RefreshCw className="h-3.5 w-3.5 text-safety" />
+                    Refresh
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-emergency hover:bg-zinc-900"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      const ok = window.confirm(
+                        `Release ${formatRegDisplay(vehicle.reg_number)} from your garage?\n\nAfter release, a new owner can claim it with the chassis last 5 from the RC.`,
+                      );
+                      if (ok) onRelease(vehicle);
+                    }}
+                  >
+                    <Unlink className="h-3.5 w-3.5" />
+                    Release
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {vehicle.fuel_type ? (
+              <span className="text-[11px] text-zinc-500">
+                {vehicle.fuel_type}
+              </span>
+            ) : null}
+            {insuranceDays !== null ? (
+              <span className="text-[11px] text-zinc-500">
+                Ins ·{" "}
+                {insuranceDays < 0
+                  ? "expired"
+                  : `${insuranceDays}d left`}
+              </span>
+            ) : null}
             <span
-              className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ring-1 ${fuelClass}`}
+              className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badge.className}`}
             >
-              <Fuel className="h-3 w-3" />
-              {vehicle.fuel_type}
+              {badge.label}
             </span>
-          )}
+          </div>
+        </div>
+      </div>
+
+      {showRcContactWarning ? (
+        <div className="mt-3 space-y-2">
+          <div
+            className="flex items-start gap-2 rounded-xl border border-amber-warn/45 bg-amber-warn/10 px-3 py-2.5"
+            role="status"
+          >
+            <AlertTriangle
+              className="mt-0.5 h-4 w-4 shrink-0 text-amber-warn"
+              aria-hidden
+            />
+            <p className="min-w-0 flex-1 text-[12px] font-semibold leading-snug text-amber-100">
+              ⚠️ RC Mobile/Aadhaar Not Seeded • ₹1,000 Fine Risk
+            </p>
+          </div>
           <button
             type="button"
-            onClick={() => onRefresh(vehicle.reg_number)}
-            disabled={refreshing}
-            className="rounded-lg p-1.5 text-zinc-400 transition hover:bg-zinc-800 hover:text-safety disabled:opacity-50"
-            aria-label="Refresh compliance"
+            onClick={() => setRcModalOpen(true)}
+            className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-amber-warn/40 bg-zinc-950 px-3 py-2 text-[12px] font-semibold text-amber-warn transition hover:bg-amber-warn/10"
           >
-            {refreshing ? (
-              <Spinner className="h-4 w-4" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
+            Fix on Parivahan
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden />
           </button>
         </div>
+      ) : null}
+
+      {/* PUC validity bar */}
+      <div className="mt-4">
+        <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${barColor(pucDays)}`}
+            style={{ width: `${Math.round(fill * 100)}%` }}
+          />
+        </div>
+        <p className="mt-1.5 text-[11px] text-zinc-500">
+          {pucUntil
+            ? `PUC valid until ${pucUntil}`
+            : "PUC expiry not available yet"}
+          {pucDays !== null && pucDays > 0 ? (
+            <span className="text-zinc-600"> · {pucDays}d left</span>
+          ) : null}
+          {pucDays !== null && pucDays <= 0 ? (
+            <span className="text-emergency"> · renew now</span>
+          ) : null}
+        </p>
       </div>
 
-      <div
-        className="mt-3 grid grid-cols-4 gap-1.5"
-        role="list"
-        aria-label="Compliance snapshot"
-      >
-        <MetricCell
-          label="Ins"
-          value={shortExpiry(vehicle.insurance_expiry_date)}
-          hint={daysHint(insuranceDays)}
-          tone={toneFromDays(insuranceDays)}
-        />
-        <MetricCell
-          label="PUC"
-          value={shortExpiry(vehicle.puc_expiry_date)}
-          hint={daysHint(pucDays)}
-          tone={toneFromDays(pucDays)}
-        />
-        <MetricCell
-          label="Challan"
-          value={pendingCount === 0 ? "Clear" : String(pendingCount)}
-          hint={
-            pendingCount === 0
-              ? "None due"
-              : formatInr(totalAmount).replace(/\s/g, "")
-          }
-          tone={challanTone}
-          onClick={
-            pendingCount > 0 ? () => onViewChallans(vehicle) : undefined
-          }
-        />
-        <MetricCell
-          label="Fit"
-          value={shortExpiry(vehicle.fitness_expiry_date)}
-          hint={daysHint(fitnessDays)}
-          tone={toneFromDays(fitnessDays)}
-        />
-      </div>
-
-      {pendingCount > 0 && (
+      {/* Challan status footer */}
+      {pendingCount > 0 ? (
         <button
           type="button"
           onClick={() => onViewChallans(vehicle)}
-          className="mt-2 w-full rounded-lg border border-emergency/30 bg-emergency/10 px-2 py-1.5 text-[11px] font-semibold text-emergency transition hover:bg-emergency/15"
+          className="mt-3 flex w-full items-center gap-2 rounded-xl border border-amber-warn/35 bg-amber-warn/10 px-3 py-2.5 text-left transition hover:bg-amber-warn/15"
         >
-          View & pay {pendingCount} challan{pendingCount === 1 ? "" : "s"} ·{" "}
-          {formatInr(totalAmount)}
+          <AlertTriangle
+            className="h-4 w-4 shrink-0 text-amber-warn"
+            aria-hidden
+          />
+          <span className="min-w-0 flex-1 text-[12px] font-medium text-amber-100">
+            {pendingCount} unpaid challan{pendingCount === 1 ? "" : "s"} ·{" "}
+            {formatInr(totalAmount)}
+          </span>
+          <span className="shrink-0 text-[11px] font-semibold text-amber-warn">
+            View
+          </span>
         </button>
+      ) : (
+        <div className="mt-3 flex w-full items-center gap-2 rounded-xl border border-safety/25 bg-safety/5 px-3 py-2.5">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-safety" aria-hidden />
+          <span className="text-[12px] font-medium text-safety/90">
+            No unpaid challans
+          </span>
+        </div>
       )}
+
+      <RCLinkingModal
+        open={rcModalOpen}
+        regNumber={formatRegDisplay(vehicle.reg_number)}
+        onClose={() => setRcModalOpen(false)}
+      />
     </article>
   );
 }

@@ -5,10 +5,11 @@
  * formats the PUC warning, and dispatches via NotificationDispatcher
  * (preferred_channel → Telegram / WhatsApp / Signal).
  *
- * Body: { vehicleId: string, daysLeft: number }
+ * Body: { vehicleId, daysLeft, alertKind?: "PUC"|"INSURANCE" }
  *   daysLeft 7 → T-7 warning
  *   daysLeft 1 → T-1 urgent
  *   daysLeft 0 → expired today
+ * Requires active vehicle_entitlements.
  *
  * ---------------------------------------------------------------------------
  * Secrets (local: supabase/functions/.env | hosted: supabase secrets set)
@@ -52,10 +53,15 @@ import {
 } from '../_shared/notifications/types.ts';
 import { WhatsAppClientError } from '../_shared/notifications/whatsapp.provider.ts';
 import type { ApiResponse } from '../_shared/types.ts';
+import {
+  getEntitlement,
+  isEntitlementActive,
+} from '../_shared/billing/entitlements.ts';
 
 const RequestSchema = z.object({
   vehicleId: z.string().uuid('vehicleId must be a UUID'),
   daysLeft: z.number().int().min(0).max(30),
+  alertKind: z.enum(['PUC', 'INSURANCE']).optional().default('PUC'),
 });
 
 interface VehicleOwnerRow {
@@ -64,6 +70,7 @@ interface VehicleOwnerRow {
   reg_number: string;
   maker_model: string | null;
   puc_expiry_date: string | null;
+  insurance_expiry_date: string | null;
   profiles: {
     phone_number: string | null;
     full_name: string | null;
@@ -122,7 +129,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     );
   }
 
-  const { vehicleId, daysLeft } = parsed.data;
+  const { vehicleId, daysLeft, alertKind } = parsed.data;
   const urgency = pucAlertUrgencyFromDaysLeft(daysLeft);
 
   try {
@@ -136,6 +143,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
       );
     }
 
+    const ent = await getEntitlement(supabase, vehicleId);
+    if (!ent || !isEntitlementActive(ent.active_until)) {
+      return jsonResponse(
+        {
+          success: false,
+          error: 'Vehicle entitlement inactive — skipping alert',
+        } satisfies ApiResponse<never>,
+        402,
+      );
+    }
+
     const profile = vehicle.profiles;
     if (!profile) {
       return jsonResponse(
@@ -143,6 +161,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
         422,
       );
     }
+
+    if (!profile.telegram_chat_id && !profile.phone_number) {
+      return jsonResponse(
+        {
+          success: false,
+          error: 'No Telegram chat or phone on profile — cannot deliver alert',
+        } satisfies ApiResponse<never>,
+        422,
+      );
+    }
+
+    const expiryDate =
+      alertKind === 'INSURANCE'
+        ? vehicle.insurance_expiry_date
+        : vehicle.puc_expiry_date;
 
     const result = await notificationDispatcher.dispatch({
       userId: vehicle.user_id,
@@ -153,8 +186,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       signalNumber: profile.signal_number,
       regNumber: vehicle.reg_number,
       makerModel: vehicle.maker_model,
-      pucExpiryDate: vehicle.puc_expiry_date,
+      pucExpiryDate: expiryDate,
       daysLeft,
+      alertLabel: alertKind === 'INSURANCE' ? 'Insurance' : 'PUC',
     });
 
     const data: SendPucAlertData = {
@@ -240,6 +274,7 @@ async function fetchVehicleWithOwner(
       reg_number,
       maker_model,
       puc_expiry_date,
+      insurance_expiry_date,
       profiles!inner (
         phone_number,
         full_name,

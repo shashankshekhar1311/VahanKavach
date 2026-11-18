@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="VahanKavach">
+  <!-- Private brand mark: abstract shield + VK monogram. No Ashoka Chakra, no government / police emblems. -->
+  <rect width="512" height="512" rx="96" fill="#09090b"/>
+  <path d="M256 64 L424 128 V268 C424 372 340 436 256 464 C172 436 88 372 88 268 V128 Z"
+        fill="#064e3b" stroke="#10b981" stroke-width="10"/>
+  <path d="M256 112 L376 160 V268 C376 340 316 388 256 412 C196 388 136 340 136 268 V160 Z"
+        fill="#10b981" opacity="0.22"/>
+  <text x="256" y="300" text-anchor="middle" font-family="Segoe UI, Helvetica, Arial, sans-serif"
+        font-size="148" font-weight="700" fill="#ecfdf5">VK</text>
+</svg>

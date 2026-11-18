@@ -7,6 +7,9 @@ export type NotificationChannel = 'TELEGRAM' | 'WHATSAPP' | 'SIGNAL';
 
 export type PucAlertUrgency = 'T7' | 'T1' | 'EXPIRED';
 
+/** Discriminator for NotificationDispatcher routing. */
+export type AlertType = 'PUC' | 'INSURANCE' | 'RC_CONTACT_WARNING';
+
 export interface InlineUrlButton {
   text: string;
   url: string;
@@ -28,6 +31,24 @@ export interface ComplianceAlertPayload {
   /** Optional CTA URLs rendered as inline buttons (Telegram) or footer links. */
   renewUrl: string | null;
   payUrl: string | null;
+  /** Defaults to PUC when unset (insurance alerts set "Insurance"). */
+  alertLabel?: string | null;
+  alertType?: AlertType;
+}
+
+/** Payload for RC mobile / Aadhaar seeding warning alerts. */
+export interface RcContactWarningPayload {
+  userId: string;
+  ownerName: string | null;
+  regNumber: string;
+  makerModel: string | null;
+  phoneNumber: string | null;
+  telegramChatId: string | null;
+  signalNumber: string | null;
+  maskedMobile?: string | null;
+  warningNotice?: string | null;
+  /** Official Parivahan mobile-update portal. */
+  updateUrl: string;
 }
 
 export interface NotificationSendResult {
@@ -40,6 +61,10 @@ export interface INotificationProvider {
   readonly channel: NotificationChannel;
   sendComplianceAlert(
     payload: ComplianceAlertPayload,
+  ): Promise<NotificationSendResult>;
+  /** Optional — Telegram implements; other channels may no-op or plain-text. */
+  sendRcContactWarning?(
+    payload: RcContactWarningPayload,
   ): Promise<NotificationSendResult>;
 }
 
@@ -82,19 +107,20 @@ export function buildPlainComplianceAlert(payload: ComplianceAlertPayload): stri
     ? `Valid until: ${formatDateInIst(payload.pucExpiryDate)}`
     : 'Valid until: unknown';
 
+  const label = payload.alertLabel?.trim() || 'PUC';
   let headline: string;
   if (payload.urgency === 'EXPIRED') {
-    headline = '🔴 PUC Expired Today';
+    headline = `🔴 ${label} Expired Today`;
   } else if (payload.urgency === 'T1') {
-    headline = '🟠 Urgent: PUC expires tomorrow';
+    headline = `🟠 Urgent: ${label} expires tomorrow`;
   } else {
-    headline = `🟡 PUC Expiring Soon — ${payload.daysLeft} days left`;
+    headline = `🟡 ${label} Expiring Soon — ${payload.daysLeft} days left`;
   }
 
   const action =
     payload.urgency === 'EXPIRED'
-      ? 'Renew your PUC immediately before driving to avoid fines and vehicle detention.'
-      : 'Please renew your Pollution Under Control certificate before it expires.';
+      ? `Renew your ${label} immediately before driving to avoid fines and vehicle detention.`
+      : `Please renew your ${label} before it expires.`;
 
   const lines = [
     greeting,

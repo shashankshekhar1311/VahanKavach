@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Mail, Shield, Smartphone } from "lucide-react";
+import type { TurnstileInstance } from "@marsidev/react-turnstile";
 
 import { supabase } from "@/lib/supabase";
 import {
@@ -11,6 +12,10 @@ import {
   isValidIndianMobile,
   toE164Indian,
 } from "@/lib/phone";
+import {
+  isTurnstileEnabled,
+  TurnstileWidget,
+} from "@/components/auth/TurnstileWidget";
 import { Spinner } from "@/components/ui/Spinner";
 
 type Channel = "email" | "phone";
@@ -22,6 +27,8 @@ function isValidEmail(raw: string): boolean {
 
 export function PhoneAuthForm() {
   const router = useRouter();
+  const turnstileRef = useRef<TurnstileInstance | undefined>(undefined);
+  const captchaRequired = isTurnstileEnabled();
   /** Prefer phone OTP (Fast2SMS hook); email remains available as fallback. */
   const [channel, setChannel] = useState<Channel>("phone");
   const [step, setStep] = useState<Step>("identity");
@@ -30,9 +37,15 @@ export function PhoneAuthForm() {
   const [e164, setE164] = useState<string | null>(null);
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
   const [otp, setOtp] = useState("");
+  const [captchaToken, setCaptchaToken] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  function resetCaptcha() {
+    setCaptchaToken(null);
+    turnstileRef.current?.reset();
+  }
 
   function switchChannel(next: Channel) {
     if (busy) return;
@@ -41,12 +54,18 @@ export function PhoneAuthForm() {
     setOtp("");
     setError(null);
     setInfo(null);
+    resetCaptcha();
   }
 
   async function sendOtp(e: FormEvent) {
     e.preventDefault();
     setError(null);
     setInfo(null);
+
+    if (captchaRequired && !captchaToken) {
+      setError("Complete the CAPTCHA check before continuing.");
+      return;
+    }
 
     if (channel === "email") {
       const normalized = email.trim().toLowerCase();
@@ -56,21 +75,28 @@ export function PhoneAuthForm() {
       }
 
       setBusy(true);
-      const { error: otpError } = await supabase.auth.signInWithOtp({
-        email: normalized,
-        options: { shouldCreateUser: true },
-      });
-      setBusy(false);
+      try {
+        const { error: otpError } = await supabase.auth.signInWithOtp({
+          email: normalized,
+          options: {
+            shouldCreateUser: true,
+            ...(captchaToken ? { captchaToken } : {}),
+          },
+        });
 
-      if (otpError) {
-        setError(otpError.message);
-        return;
+        if (otpError) {
+          setError(friendlyOtpError(otpError.message));
+          return;
+        }
+
+        setPendingEmail(normalized);
+        setE164(null);
+        setStep("otp");
+        setInfo("OTP sent to email. Enter the 6-digit code.");
+      } finally {
+        setBusy(false);
+        resetCaptcha();
       }
-
-      setPendingEmail(normalized);
-      setE164(null);
-      setStep("otp");
-      setInfo("OTP sent to email. Enter the 6-digit code.");
       return;
     }
 
@@ -86,21 +112,28 @@ export function PhoneAuthForm() {
     }
 
     setBusy(true);
-    const { error: otpError } = await supabase.auth.signInWithOtp({
-      phone,
-      options: { shouldCreateUser: true },
-    });
-    setBusy(false);
+    try {
+      const { error: otpError } = await supabase.auth.signInWithOtp({
+        phone,
+        options: {
+          shouldCreateUser: true,
+          ...(captchaToken ? { captchaToken } : {}),
+        },
+      });
 
-    if (otpError) {
-      setError(otpError.message);
-      return;
+      if (otpError) {
+        setError(friendlyOtpError(otpError.message));
+        return;
+      }
+
+      setE164(phone);
+      setPendingEmail(null);
+      setStep("otp");
+      setInfo("OTP sent via SMS. Enter the 6-digit code.");
+    } finally {
+      setBusy(false);
+      resetCaptcha();
     }
-
-    setE164(phone);
-    setPendingEmail(null);
-    setStep("otp");
-    setInfo("OTP sent via SMS. Enter the 6-digit code.");
   }
 
   async function verifyOtp(e: FormEvent) {
@@ -161,22 +194,58 @@ export function PhoneAuthForm() {
     router.replace("/dashboard");
   }
 
-  /** Local seed user shortcut when SMS/email OTP is not configured. */
+  /** Staging sandbox password login when SMTP / SMS hook is unavailable. */
   async function demoLogin() {
-    setBusy(true);
-    setError(null);
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: "aarav.mehta@vahankavach.test",
-      password: "TestPassword123!",
-    });
-    setBusy(false);
-
-    if (signInError) {
-      setError(signInError.message);
+    if (captchaRequired && !captchaToken) {
+      setError("Complete the CAPTCHA check before continuing.");
       return;
     }
-    router.replace("/dashboard");
+
+    setBusy(true);
+    setError(null);
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: "sandbox@vahankavach.test",
+        password: "SandboxTest123!",
+        ...(captchaToken
+          ? { options: { captchaToken } }
+          : {}),
+      });
+
+      if (signInError) {
+        setError(signInError.message);
+        return;
+      }
+      router.replace("/dashboard");
+    } finally {
+      setBusy(false);
+      resetCaptcha();
+    }
   }
+
+  function friendlyOtpError(message: string): string {
+    const lower = message.toLowerCase();
+    if (
+      lower.includes("confirmation email") ||
+      lower.includes("error sending") ||
+      lower.includes("smtp")
+    ) {
+      return "Email OTP is unavailable (SMTP misconfigured). Use Phone OTP, or Continue with staging sandbox account.";
+    }
+    if (
+      lower.includes("hook") ||
+      lower.includes("sms") ||
+      lower.includes("reach hook")
+    ) {
+      return "SMS OTP hook failed. Use Continue with staging sandbox account, or retry phone OTP shortly.";
+    }
+    if (lower.includes("captcha") || lower.includes("turnstile")) {
+      return "CAPTCHA verification failed. Complete the check again and retry.";
+    }
+    return message;
+  }
+
+  const captchaBlocking = captchaRequired && !captchaToken;
 
   return (
     <div className="flex flex-1 flex-col justify-center gap-8 py-10">
@@ -293,6 +362,17 @@ export function PhoneAuthForm() {
             </div>
           )}
 
+          <TurnstileWidget
+            ref={turnstileRef}
+            onTokenChange={setCaptchaToken}
+          />
+
+          {captchaRequired && !captchaToken ? (
+            <p className="text-center text-[11px] text-zinc-500">
+              Complete the CAPTCHA to enable sign-in.
+            </p>
+          ) : null}
+
           {error && (
             <p className="text-sm text-emergency" role="alert">
               {error}
@@ -301,7 +381,7 @@ export function PhoneAuthForm() {
 
           <button
             type="submit"
-            disabled={busy}
+            disabled={busy || captchaBlocking}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-safety py-3.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-60 active:scale-[0.98]"
           >
             {busy ? <Spinner /> : null}
@@ -311,11 +391,14 @@ export function PhoneAuthForm() {
           <button
             type="button"
             onClick={demoLogin}
-            disabled={busy}
-            className="w-full text-center text-xs text-zinc-500 underline-offset-2 transition hover:text-zinc-300 hover:underline disabled:opacity-50"
+            disabled={busy || captchaBlocking}
+            className="w-full rounded-xl border border-zinc-700 bg-zinc-900/80 py-3 text-xs font-medium text-zinc-200 transition hover:border-safety/50 hover:text-safety disabled:opacity-50"
           >
-            Continue with local demo account
+            Continue with staging sandbox account
           </button>
+          <p className="text-center text-[11px] text-zinc-600">
+            sandbox@vahankavach.test · use when email/SMS OTP is down
+          </p>
         </form>
       ) : (
         <form onSubmit={verifyOtp} className="space-y-4">
@@ -370,6 +453,7 @@ export function PhoneAuthForm() {
               setOtp("");
               setError(null);
               setInfo(null);
+              resetCaptcha();
             }}
             className="w-full text-center text-xs text-zinc-500 hover:text-zinc-300"
           >

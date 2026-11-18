@@ -66,6 +66,8 @@ data class VehicleWithChallans(
 data class SyncVehicleRequest(
     val regNumber: String,
     val forceRefresh: Boolean = false,
+    val mode: String? = null,
+    val chassisLast5: String? = null,
 )
 
 @Serializable

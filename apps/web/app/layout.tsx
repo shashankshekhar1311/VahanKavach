@@ -14,17 +14,34 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "VahanKavach — Your Automated Vehicle Shield",
+  title: "VahanKavach — Automotive & Fleet Compliance",
   description:
-    "Mobile-first garage for PUC, insurance, fitness, and e-challan protection.",
+    "Private automotive & fleet management app for PUC, insurance, fitness, and e-challan reminders. Independent software — not affiliated with MoRTH, Parivahan, or any police department.",
   applicationName: "VahanKavach",
+  category: "Automotive & Fleet Management",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "VahanKavach",
+  },
+  icons: {
+    icon: [
+      { url: "/icons/icon-192.svg", type: "image/svg+xml", sizes: "192x192" },
+      { url: "/icons/icon-512.svg", type: "image/svg+xml", sizes: "512x512" },
+    ],
+    apple: [{ url: "/icons/icon-192.svg", type: "image/svg+xml" }],
+  },
+  other: {
+    "mobile-web-app-capable": "yes",
+  },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
-  themeColor: "#09090b",
+  themeColor: "#10b981",
 };
 
 export default function RootLayout({
@@ -42,3 +59,4 @@ export default function RootLayout({
     </html>
   );
 }
+

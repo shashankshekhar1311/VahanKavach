@@ -86,7 +86,18 @@ class GarageRepository(private val supabase: SupabaseClient) {
         }
     }
 
-    suspend fun syncVehicle(regNumber: String, forceRefresh: Boolean = false): SyncVehicleApiResponse {
+    suspend fun releaseVehicle(vehicleId: String) {
+        supabase.from("vehicles").delete {
+            filter { eq("id", vehicleId) }
+        }
+    }
+
+    suspend fun syncVehicle(
+        regNumber: String,
+        forceRefresh: Boolean = false,
+        mode: String? = null,
+        chassisLast5: String? = null,
+    ): SyncVehicleApiResponse {
         val accessToken = supabase.auth.currentSessionOrNull()?.accessToken
             ?: error("Not signed in")
         val base = BuildConfig.SUPABASE_URL.trimEnd('/')
@@ -94,7 +105,14 @@ class GarageRepository(private val supabase: SupabaseClient) {
             header("Authorization", "Bearer $accessToken")
             header("apikey", BuildConfig.SUPABASE_ANON_KEY)
             contentType(ContentType.Application.Json)
-            setBody(SyncVehicleRequest(regNumber = regNumber, forceRefresh = forceRefresh))
+            setBody(
+                SyncVehicleRequest(
+                    regNumber = regNumber,
+                    forceRefresh = forceRefresh,
+                    mode = mode,
+                    chassisLast5 = chassisLast5,
+                ),
+            )
         }.body()
     }
 

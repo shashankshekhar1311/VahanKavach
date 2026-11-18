@@ -9,13 +9,16 @@ import { SignalNotificationProvider } from './signal.provider.ts';
 import { TelegramNotificationProvider } from './telegram.provider.ts';
 import {
   pucAlertUrgencyFromDaysLeft,
+  type AlertType,
   type ComplianceAlertPayload,
   type INotificationProvider,
   type NotificationChannel,
   type NotificationSendResult,
   type PucAlertUrgency,
+  type RcContactWarningPayload,
 } from './types.ts';
 import { WhatsAppNotificationProvider } from './whatsapp.provider.ts';
+import { PARIVAHAN_MOBILE_UPDATE_URL } from '../providers/contact-compliance.ts';
 
 export interface DispatchInput {
   userId: string;
@@ -30,11 +33,17 @@ export interface DispatchInput {
   daysLeft: number;
   renewUrl?: string | null;
   payUrl?: string | null;
+  alertLabel?: string | null;
+  /** Defaults to PUC. Use RC_CONTACT_WARNING for seeding audit alerts. */
+  alertType?: AlertType;
+  maskedMobile?: string | null;
+  warningNotice?: string | null;
 }
 
 export interface DispatchResult extends NotificationSendResult {
   urgency: PucAlertUrgency;
   preferredChannel: NotificationChannel;
+  alertType: AlertType;
 }
 
 export class NotificationDispatcher {
@@ -50,6 +59,11 @@ export class NotificationDispatcher {
 
   /** Route a compliance alert to the user's preferred channel. */
   async dispatch(input: DispatchInput): Promise<DispatchResult> {
+    const alertType: AlertType = input.alertType ?? 'PUC';
+    if (alertType === 'RC_CONTACT_WARNING') {
+      return this.dispatchRcContactWarning(input);
+    }
+
     const preferredChannel = resolveDispatchChannel(input);
     const provider = this.providers.get(preferredChannel);
     if (!provider) {
@@ -76,6 +90,8 @@ export class NotificationDispatcher {
       signalNumber: input.signalNumber,
       renewUrl: input.renewUrl ?? `${appBase}/dashboard`,
       payUrl: input.payUrl ?? payPortal,
+      alertLabel: input.alertLabel ?? (alertType === 'INSURANCE' ? 'Insurance' : 'PUC'),
+      alertType,
     };
 
     const result = await provider.sendComplianceAlert(payload);
@@ -83,6 +99,67 @@ export class NotificationDispatcher {
       ...result,
       urgency,
       preferredChannel,
+      alertType,
+    };
+  }
+
+  /** Dedicated RC contact / Aadhaar seeding warning. */
+  async dispatchRcContactWarning(
+    input: Omit<DispatchInput, 'daysLeft' | 'pucExpiryDate'> & {
+      daysLeft?: number;
+      pucExpiryDate?: string | null;
+    },
+  ): Promise<DispatchResult> {
+    const preferredChannel = resolveDispatchChannel(input);
+    const provider = this.providers.get(preferredChannel);
+    if (!provider) {
+      throw new Error(`No notification provider registered for ${preferredChannel}`);
+    }
+
+    const updateUrl =
+      input.renewUrl?.trim() || PARIVAHAN_MOBILE_UPDATE_URL;
+
+    const rcPayload: RcContactWarningPayload = {
+      userId: input.userId,
+      ownerName: input.ownerName,
+      regNumber: input.regNumber,
+      makerModel: input.makerModel,
+      phoneNumber: input.phoneNumber,
+      telegramChatId: input.telegramChatId,
+      signalNumber: input.signalNumber,
+      maskedMobile: input.maskedMobile,
+      warningNotice: input.warningNotice,
+      updateUrl,
+    };
+
+    let result: NotificationSendResult;
+    if (provider.sendRcContactWarning) {
+      result = await provider.sendRcContactWarning(rcPayload);
+    } else {
+      // Fallback: route through compliance alert with RC kind.
+      result = await provider.sendComplianceAlert({
+        userId: input.userId,
+        ownerName: input.ownerName,
+        regNumber: input.regNumber,
+        makerModel: input.makerModel,
+        pucExpiryDate: input.pucExpiryDate ?? null,
+        daysLeft: input.daysLeft ?? 0,
+        urgency: 'T7',
+        phoneNumber: input.phoneNumber,
+        telegramChatId: input.telegramChatId,
+        signalNumber: input.signalNumber,
+        renewUrl: updateUrl,
+        payUrl: null,
+        alertLabel: 'RC Contact',
+        alertType: 'RC_CONTACT_WARNING',
+      });
+    }
+
+    return {
+      ...result,
+      urgency: 'T7',
+      preferredChannel,
+      alertType: 'RC_CONTACT_WARNING',
     };
   }
 
@@ -150,7 +227,9 @@ function normalizeChannel(
 }
 
 /** WhatsApp and Signal are parked in the app → always deliver via Telegram. */
-function resolveDispatchChannel(input: DispatchInput): NotificationChannel {
+function resolveDispatchChannel(input: {
+  preferredChannel: NotificationChannel | null;
+}): NotificationChannel {
   const preferred = normalizeChannel(input.preferredChannel);
 
   if (preferred === 'WHATSAPP' || preferred === 'SIGNAL') {

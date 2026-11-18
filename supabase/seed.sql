@@ -206,4 +206,11 @@ INSERT INTO public.challans (
     NULL
   );
 
+-- Billing: trial entitlements for seed owner (requires billing migration).
+SELECT public.admin_grant_user_entitlements(
+  'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'::uuid,
+  30,
+  'trial'
+);
+
 COMMIT;
