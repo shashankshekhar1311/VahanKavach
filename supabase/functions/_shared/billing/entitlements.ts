@@ -234,6 +234,88 @@ export async function activatePaidPeriod(
   return { periodEnd: end.toISOString(), entitled: rows.length };
 }
 
+/**
+ * Phase 1: bump Pro seat count without restarting the annual window.
+ * Falls back to a fresh activatePaidPeriod when no active period exists.
+ */
+export async function expandPaidSeats(
+  admin: SupabaseClient,
+  userId: string,
+  targetVehicleQty: number,
+  orderId: string | null,
+): Promise<{
+  periodEnd: string;
+  entitled: number;
+  previousQty: number;
+  vehicleQty: number;
+  expanded: boolean;
+}> {
+  const sub = await getSubscription(admin, userId);
+  const previousQty = Math.max(0, sub?.vehicle_qty ?? 0);
+  const targetQty = Math.max(1, Math.floor(targetVehicleQty), previousQty);
+  const periodEnd = sub?.current_period_end ?? sub?.trial_ends_at ?? null;
+  const periodOk =
+    Boolean(periodEnd) && isEntitlementActive(periodEnd) &&
+    Boolean(sub) &&
+    (sub!.status === 'active' || sub!.status === 'trial' || sub!.status === 'past_due');
+
+  if (!periodOk || !periodEnd) {
+    const activated = await activatePaidPeriod(admin, userId, targetQty, orderId);
+    return {
+      periodEnd: activated.periodEnd,
+      entitled: activated.entitled,
+      previousQty,
+      vehicleQty: targetQty,
+      expanded: false,
+    };
+  }
+
+  const { error: subErr } = await admin
+    .from('subscriptions')
+    .update({
+      status: 'active',
+      vehicle_qty: targetQty,
+      razorpay_last_order_id: orderId,
+      amount_paise_per_vehicle: billingPaisePerVehicleYear(),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('user_id', userId);
+  if (subErr) throw new Error(`expand seats failed: ${subErr.message}`);
+
+  await admin
+    .from('profiles')
+    .update({ is_pro: true, updated_at: new Date().toISOString() })
+    .eq('id', userId);
+
+  const { data: vehicles, error } = await admin
+    .from('vehicles')
+    .select('id')
+    .eq('user_id', userId);
+  if (error) throw new Error(`list vehicles failed: ${error.message}`);
+
+  const rows = (vehicles ?? []).map((v: { id: string }) => ({
+    vehicle_id: v.id,
+    user_id: userId,
+    active_until: periodEnd,
+    source: 'subscription' as const,
+  }));
+
+  if (rows.length > 0) {
+    const { error: entErr } = await admin
+      .from('vehicle_entitlements')
+      .upsert(rows, { onConflict: 'vehicle_id' });
+    if (entErr) throw new Error(`entitle vehicles failed: ${entErr.message}`);
+  }
+
+  return {
+    periodEnd,
+    entitled: rows.length,
+    previousQty,
+    vehicleQty: targetQty,
+    expanded: true,
+  };
+}
+
 export async function assertVehicleEntitledForRefresh(
   admin: SupabaseClient,
   vehicleId: string,

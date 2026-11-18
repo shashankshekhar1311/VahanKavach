@@ -108,14 +108,29 @@ export function BillingPanel({
     setQty(Math.max(suggestedQty ?? vehicleCount, vehicleCount, 1));
   }, [suggestedQty, vehicleCount]);
 
-  async function handleCheckout() {
+  async function handleCheckout(opts?: {
+    checkoutMode?: "purchase" | "expand_seats";
+  }) {
     if (!user) return;
     setBusy(true);
     setMessage(null);
+    const coveredNow = sub?.vehicle_qty ?? 0;
+    const periodEndNow = sub?.current_period_end ?? sub?.trial_ends_at ?? null;
+    const periodOk =
+      Boolean(periodEndNow) && new Date(periodEndNow!).getTime() > Date.now();
+    const checkoutMode =
+      opts?.checkoutMode ??
+      (mode === "manage" &&
+      periodOk &&
+      coveredNow > 0 &&
+      qty > coveredNow
+        ? "expand_seats"
+        : "purchase");
+
     try {
       const { data, error } = await supabase.functions.invoke(
         "create-billing-checkout",
-        { body: { vehicleQty: qty } },
+        { body: { vehicleQty: qty, mode: checkoutMode } },
       );
       const payload = data as {
         success?: boolean;
@@ -184,8 +199,17 @@ export function BillingPanel({
         year: "numeric",
       })
     : null;
-  const total = annualTotalRupees(qty);
   const covered = sub?.vehicle_qty ?? 0;
+  const expandExtra = Math.max(0, qty - covered);
+  const canExpandSeats =
+    mode === "manage" &&
+    covered > 0 &&
+    expandExtra > 0 &&
+    Boolean(periodEnd) &&
+    new Date(periodEnd!).getTime() > Date.now();
+  const total = canExpandSeats
+    ? expandExtra * ANNUAL_PREPAID_RUPEES_PER_VEHICLE
+    : annualTotalRupees(qty);
 
   if (mode === "manage") {
     return (
@@ -215,7 +239,7 @@ export function BillingPanel({
               onClick={() => {
                 setQty(Math.max(vehicleCount, covered, 1));
                 setChanging(false);
-                void handleCheckout();
+                void handleCheckout({ checkoutMode: "purchase" });
               }}
               className="rounded-lg border border-safety/40 bg-safety/15 px-2.5 py-1.5 text-[11px] font-semibold text-safety transition hover:bg-safety/25 disabled:opacity-50"
             >
@@ -234,7 +258,7 @@ export function BillingPanel({
               }}
               className="rounded-lg border border-zinc-700 px-2.5 py-1.5 text-[11px] font-medium text-zinc-300 transition hover:bg-zinc-900 disabled:opacity-50"
             >
-              Change plan
+              Add seats
             </button>
           </div>
         </div>
@@ -245,7 +269,7 @@ export function BillingPanel({
               Vehicles
               <input
                 type="number"
-                min={Math.max(vehicleCount, 1)}
+                min={Math.max(vehicleCount, covered, 1)}
                 max={50}
                 value={qty}
                 disabled={busy}
@@ -255,11 +279,19 @@ export function BillingPanel({
                 className="w-14 rounded-md border border-zinc-700 bg-zinc-950 px-1.5 py-1 text-xs text-zinc-100"
               />
             </label>
-            <span className="text-[11px] text-zinc-500">₹{total}/year</span>
+            <span className="text-[11px] text-zinc-500">
+              {canExpandSeats
+                ? `+${expandExtra} · ₹${total}`
+                : `₹${total}/year`}
+            </span>
             <button
               type="button"
               disabled={busy}
-              onClick={() => void handleCheckout()}
+              onClick={() =>
+                void handleCheckout({
+                  checkoutMode: canExpandSeats ? "expand_seats" : "purchase",
+                })
+              }
               className="inline-flex items-center gap-1 rounded-lg bg-safety px-2.5 py-1.5 text-[11px] font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-50"
             >
               {busy ? <Spinner className="h-3.5 w-3.5" /> : null}

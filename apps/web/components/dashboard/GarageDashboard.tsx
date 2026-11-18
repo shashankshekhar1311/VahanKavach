@@ -51,6 +51,10 @@ export function GarageDashboard() {
   const [pricingTier, setPricingTier] = useState<CheckoutTier>("pro_annual");
   const [showPlans, setShowPlans] = useState(false);
   const [showAddSeat, setShowAddSeat] = useState(false);
+  const [pendingProtect, setPendingProtect] = useState<{
+    regNumber: string;
+    chassisLast5: string;
+  } | null>(null);
   const [billing, setBilling] = useState<BillingSnapshot | null>(null);
 
   const isSubscribed = Boolean(profile?.is_pro || billing?.isActive);
@@ -245,7 +249,11 @@ export function GarageDashboard() {
     }
   }
 
-  async function handleProtect(regNumber: string, chassisLast5: string) {
+  async function handleProtect(
+    regNumber: string,
+    chassisLast5: string,
+    opts?: { isRetry?: boolean },
+  ) {
     setProtecting(true);
     setBanner(null);
     try {
@@ -255,7 +263,13 @@ export function GarageDashboard() {
         forceRefresh: false,
       });
       await recordProtectConsent(regNumber);
-      setBanner("Vehicle claimed and protected — compliance synced.");
+      setPendingProtect(null);
+      setShowAddSeat(false);
+      setBanner(
+        opts?.isRetry
+          ? "Seat added — vehicle claimed and protected."
+          : "Vehicle claimed and protected — compliance synced.",
+      );
       await loadGarage();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Protect failed";
@@ -267,6 +281,7 @@ export function GarageDashboard() {
 
       if (isEntitlementBanner(message)) {
         setBanner(null);
+        setPendingProtect({ regNumber, chassisLast5 });
         if (hasProSeatPlan()) {
           setShowAddSeat(true);
           setShowPlans(false);
@@ -276,11 +291,26 @@ export function GarageDashboard() {
         }
       } else {
         setBanner(message);
+        if (!opts?.isRetry) setPendingProtect(null);
       }
-      throw err;
+      if (!opts?.isRetry) throw err;
     } finally {
       setProtecting(false);
     }
+  }
+
+  async function retryPendingProtectAfterSeats() {
+    setShowAddSeat(false);
+    await refreshProfile();
+    const pending = pendingProtect;
+    if (!pending) {
+      setBanner("Pro seats updated — try Protect again on the new vehicle.");
+      return;
+    }
+    setBanner("Seats updated — finishing Protect…");
+    await handleProtect(pending.regNumber, pending.chassisLast5, {
+      isRetry: true,
+    });
   }
 
   async function handleRefresh(regNumber: string) {
@@ -396,14 +426,11 @@ export function GarageDashboard() {
             seatsNeeded={
               billingQtyHint ?? Math.max(vehicles.length + 1, 1)
             }
-            onDismiss={() => setShowAddSeat(false)}
-            onActivated={() => {
+            onDismiss={() => {
               setShowAddSeat(false);
-              void refreshProfile();
-              setBanner(
-                "Pro seats updated — try Protect again on the new vehicle.",
-              );
+              setPendingProtect(null);
             }}
+            onActivated={() => retryPendingProtectAfterSeats()}
             onSeeOtherPlans={() => {
               setShowAddSeat(false);
               setShowPlans(true);

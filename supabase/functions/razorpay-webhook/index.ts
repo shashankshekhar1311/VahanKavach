@@ -10,7 +10,10 @@
  */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
-import { activatePaidPeriod } from '../_shared/billing/entitlements.ts';
+import {
+  activatePaidPeriod,
+  expandPaidSeats,
+} from '../_shared/billing/entitlements.ts';
 import {
   grantPlanPurchase,
   markPaymentSuccessful,
@@ -467,7 +470,7 @@ async function activateVehicleSubscription(
 ): Promise<Record<string, unknown>> {
   const { data: attempt, error } = await admin
     .from('payment_attempts')
-    .select('id, user_id, vehicle_qty, status, kind, amount_paise')
+    .select('id, user_id, vehicle_qty, status, kind, amount_paise, metadata')
     .eq('razorpay_order_id', orderId)
     .maybeSingle();
 
@@ -486,10 +489,23 @@ async function activateVehicleSubscription(
   }
 
   const qty = Math.max(1, Number(attempt.vehicle_qty) || 1);
+  const meta = (attempt.metadata ?? {}) as {
+    expand_seats?: boolean;
+    mode?: string;
+    extra_seats?: number;
+    previous_qty?: number;
+  };
+  const isExpand =
+    meta.expand_seats === true || meta.mode === 'expand_seats';
   const expected =
     Number(attempt.amount_paise) > 0
       ? Number(attempt.amount_paise)
-      : expectedPaiseForTier('pro_annual', qty);
+      : isExpand
+        ? expectedPaiseForTier(
+            'pro_annual',
+            Math.max(1, Number(meta.extra_seats) || 1),
+          )
+        : expectedPaiseForTier('pro_annual', qty);
 
   if (!amountMatchesExpected(paidPaise, expected)) {
     console.error('payment_attempt amount_mismatch', {
@@ -517,6 +533,24 @@ async function activateVehicleSubscription(
     return { kind: attempt.kind };
   }
 
+  if (isExpand) {
+    const expanded = await expandPaidSeats(
+      admin,
+      attempt.user_id as string,
+      qty,
+      orderId,
+    );
+    return {
+      kind: 'subscription',
+      mode: 'expand_seats',
+      userId: attempt.user_id,
+      periodEnd: expanded.periodEnd,
+      entitled: expanded.entitled,
+      vehicleQty: expanded.vehicleQty,
+      previousQty: expanded.previousQty,
+    };
+  }
+
   const activated = await activatePaidPeriod(
     admin,
     attempt.user_id as string,
@@ -534,6 +568,7 @@ async function activateVehicleSubscription(
 
   return {
     kind: 'subscription',
+    mode: 'purchase',
     userId: attempt.user_id,
     periodEnd: activated.periodEnd,
     entitled: activated.entitled,

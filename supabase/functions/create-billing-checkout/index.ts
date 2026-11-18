@@ -1,8 +1,13 @@
 /**
- * create-billing-checkout — annual prepaid (₹399/vehicle/year · challan every 10 days).
+ * create-billing-checkout — Kavach Pro annual prepaid.
  *
- * Body: { vehicleQty: number }
- * Returns Razorpay order fields, or activates immediately when BILLING_MOCK=true.
+ * Body: {
+ *   vehicleQty: number
+ *   mode?: 'purchase' | 'expand_seats'   // default purchase
+ * }
+ *
+ * purchase     — full ₹399 × vehicleQty, starts/renews annual window
+ * expand_seats — ₹399 × extra seats only, keeps current_period_end
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -18,6 +23,9 @@ import {
 import {
   activatePaidPeriod,
   countUserVehicles,
+  expandPaidSeats,
+  getSubscription,
+  isEntitlementActive,
 } from '../_shared/billing/entitlements.ts';
 import { jsonResponse, optionsResponse } from '../_shared/cors.ts';
 import {
@@ -27,9 +35,9 @@ import {
 } from '../_shared/security.ts';
 import type { ApiResponse } from '../_shared/types.ts';
 
-
 const RequestSchema = z.object({
   vehicleQty: z.number().int().min(1).max(50),
+  mode: z.enum(['purchase', 'expand_seats']).optional(),
 });
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -91,6 +99,34 @@ Deno.serve(async (req: Request): Promise<Response> => {
       auth: { persistSession: false, autoRefreshToken: false },
     });
 
+    const owned = await countUserVehicles(admin, user.id);
+    const sub = await getSubscription(admin, user.id);
+    const currentQty = Math.max(0, sub?.vehicle_qty ?? 0);
+    const periodEnd = sub?.current_period_end ?? sub?.trial_ends_at ?? null;
+    const periodOk =
+      Boolean(periodEnd) &&
+      isEntitlementActive(periodEnd) &&
+      Boolean(sub) &&
+      (sub!.status === 'active' ||
+        sub!.status === 'trial' ||
+        sub!.status === 'past_due');
+
+    const requestedMode = parsed.data.mode ?? 'purchase';
+    const canExpand =
+      requestedMode === 'expand_seats' && periodOk && currentQty > 0;
+    const mode = canExpand ? 'expand_seats' : 'purchase';
+
+    const vehicleQty =
+      mode === 'expand_seats'
+        ? Math.max(parsed.data.vehicleQty, owned, currentQty + 1, 1)
+        : Math.max(parsed.data.vehicleQty, owned, 1);
+
+    const paiseEach = billingPaisePerVehicleYear();
+    const extraSeats =
+      mode === 'expand_seats' ? Math.max(1, vehicleQty - currentQty) : vehicleQty;
+    const amountPaise = extraSeats * paiseEach;
+    const amountRupees = amountPaise / 100;
+
     await writeAuditLog(admin, {
       userId: user.id,
       eventType: 'PAYMENT_ATTEMPT',
@@ -98,16 +134,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
       userAgent: userAgentFromRequest(req),
       requestPayload: {
         product: 'kavach_pro_annual',
-        vehicleQty: parsed.data.vehicleQty,
+        mode,
+        vehicleQty,
+        currentQty,
+        extraSeats,
         mock: billingMockEnabled(),
       },
     });
-
-    const owned = await countUserVehicles(admin, user.id);
-    const vehicleQty = Math.max(parsed.data.vehicleQty, owned, 1);
-    const paiseEach = billingPaisePerVehicleYear();
-    const amountPaise = vehicleQty * paiseEach;
-
 
     if (billingMockEnabled()) {
       const { data: attempt, error: attErr } = await admin
@@ -118,30 +151,49 @@ Deno.serve(async (req: Request): Promise<Response> => {
           amount_paise: amountPaise,
           status: 'paid',
           vehicle_qty: vehicleQty,
-          metadata: { mock: true },
+          metadata: {
+            mock: true,
+            mode,
+            previous_qty: currentQty,
+            extra_seats: extraSeats,
+            expand_seats: mode === 'expand_seats',
+          },
         })
         .select('id')
         .single();
       if (attErr) throw new Error(attErr.message);
 
-      const activated = await activatePaidPeriod(admin, user.id, vehicleQty, null);
+      const activated =
+        mode === 'expand_seats'
+          ? await expandPaidSeats(admin, user.id, vehicleQty, null)
+          : {
+              ...(await activatePaidPeriod(admin, user.id, vehicleQty, null)),
+              previousQty: currentQty,
+              vehicleQty,
+              expanded: false,
+            };
+
       return jsonResponse({
         success: true,
         data: {
           mock: true,
           attemptId: attempt.id,
-          vehicleQty,
+          mode,
+          vehicleQty: activated.vehicleQty ?? vehicleQty,
+          previousQty: currentQty,
+          extraSeats,
           amountPaise,
-          amountRupees: amountPaise / 100,
+          amountRupees,
           rupeesPerVehicle: rupeesPerVehicleYear(),
           periodEnd: activated.periodEnd,
           entitledVehicles: activated.entitled,
           message:
-            'Mock annual prepaid activated (BILLING_MOCK=true) — ₹399/vehicle/year.',
+            mode === 'expand_seats'
+              ? `Mock Pro seat expand: +${extraSeats} seat(s) to ${vehicleQty} (same period).`
+              : 'Mock annual prepaid activated (BILLING_MOCK=true) — ₹399/vehicle/year.',
         },
       });
     }
-
 
     const keyId = Deno.env.get('RAZORPAY_KEY_ID')?.trim();
     const keySecret = Deno.env.get('RAZORPAY_KEY_SECRET')?.trim();
@@ -157,6 +209,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     const receipt = `vk_${user.id.replace(/-/g, '').slice(0, 8)}_${Date.now()}`;
+    const description =
+      mode === 'expand_seats'
+        ? `VahanKavach Pro — add ${extraSeats} seat(s) (₹${rupeesPerVehicleYear()} each) · cover ${vehicleQty}`
+        : `VahanKavach — ${vehicleQty} vehicle(s) × ₹${rupeesPerVehicleYear()}/year ` +
+          `(challan every 10 days; vs ~₹${listRupeesPerVehicleYear()} à la carte)`;
+
     const orderRes = await fetch('https://api.razorpay.com/v1/orders', {
       method: 'POST',
       headers: {
@@ -171,6 +229,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
           user_id: user.id,
           vehicle_qty: String(vehicleQty),
           product: 'kavach_pro_annual',
+          mode,
+          extra_seats: String(extraSeats),
         },
       }),
     });
@@ -194,7 +254,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
         status: 'pending',
         vehicle_qty: vehicleQty,
         razorpay_order_id: order.id,
-        metadata: { receipt },
+        metadata: {
+          receipt,
+          mode,
+          previous_qty: currentQty,
+          extra_seats: extraSeats,
+          expand_seats: mode === 'expand_seats',
+        },
       })
       .select('id')
       .single();
@@ -209,12 +275,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
         amountPaise: order.amount,
         currency: order.currency,
         keyId,
+        mode,
         vehicleQty,
-        amountRupees: amountPaise / 100,
+        previousQty: currentQty,
+        extraSeats,
+        amountRupees,
         rupeesPerVehicle: rupeesPerVehicleYear(),
-        description:
-          `VahanKavach — ${vehicleQty} vehicle(s) × ₹${rupeesPerVehicleYear()}/year ` +
-          `(challan every 10 days; vs ~₹${listRupeesPerVehicleYear()} à la carte)`,
+        description,
       },
     });
   } catch (err) {
