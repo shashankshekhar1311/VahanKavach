@@ -17,6 +17,7 @@ import {
   billingMockEnabled,
   billingPaisePerVehicleYear,
   listRupeesPerVehicleYear,
+  prorateExpandSeatPaise,
   rupeesPerVehicleYear,
 } from '../_shared/billing/config.ts';
 
@@ -124,8 +125,19 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const paiseEach = billingPaisePerVehicleYear();
     const extraSeats =
       mode === 'expand_seats' ? Math.max(1, vehicleQty - currentQty) : vehicleQty;
-    const amountPaise = extraSeats * paiseEach;
-    const amountRupees = amountPaise / 100;
+
+    let amountPaise = extraSeats * paiseEach;
+    let amountRupees = amountPaise / 100;
+    let daysRemaining: number | null = null;
+    let periodDays: number | null = null;
+
+    if (mode === 'expand_seats' && periodEnd) {
+      const prorated = prorateExpandSeatPaise(extraSeats, periodEnd);
+      amountPaise = prorated.amountPaise;
+      amountRupees = prorated.amountRupees;
+      daysRemaining = prorated.daysRemaining;
+      periodDays = prorated.periodDays;
+    }
 
     await writeAuditLog(admin, {
       userId: user.id,
@@ -138,6 +150,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         vehicleQty,
         currentQty,
         extraSeats,
+        amountRupees,
+        daysRemaining,
         mock: billingMockEnabled(),
       },
     });
@@ -157,6 +171,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
             previous_qty: currentQty,
             extra_seats: extraSeats,
             expand_seats: mode === 'expand_seats',
+            days_remaining: daysRemaining,
+            period_days: periodDays,
+            amount_rupees: amountRupees,
           },
         })
         .select('id')
@@ -184,12 +201,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
           extraSeats,
           amountPaise,
           amountRupees,
+          daysRemaining,
+          periodDays,
+          coveredUntil: activated.periodEnd,
           rupeesPerVehicle: rupeesPerVehicleYear(),
           periodEnd: activated.periodEnd,
           entitledVehicles: activated.entitled,
           message:
             mode === 'expand_seats'
-              ? `Mock Pro seat expand: +${extraSeats} seat(s) to ${vehicleQty} (same period).`
+              ? `Mock Pro seat expand: +${extraSeats} seat(s) · ₹${amountRupees} for ${daysRemaining} day(s) left (until shared renewal).`
               : 'Mock annual prepaid activated (BILLING_MOCK=true) — ₹399/vehicle/year.',
         },
       });
@@ -209,9 +229,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     const receipt = `vk_${user.id.replace(/-/g, '').slice(0, 8)}_${Date.now()}`;
+    const coveredUntilLabel = periodEnd
+      ? new Date(periodEnd).toLocaleDateString('en-IN', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        })
+      : '';
     const description =
       mode === 'expand_seats'
-        ? `VahanKavach Pro — add ${extraSeats} seat(s) (₹${rupeesPerVehicleYear()} each) · cover ${vehicleQty}`
+        ? `VahanKavach Pro — +${extraSeats} seat(s) · ₹${amountRupees} for ${daysRemaining} day(s) left (until ${coveredUntilLabel})`
         : `VahanKavach — ${vehicleQty} vehicle(s) × ₹${rupeesPerVehicleYear()}/year ` +
           `(challan every 10 days; vs ~₹${listRupeesPerVehicleYear()} à la carte)`;
 
@@ -231,6 +258,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
           product: 'kavach_pro_annual',
           mode,
           extra_seats: String(extraSeats),
+          amount_rupees: String(amountRupees),
+          days_remaining: daysRemaining != null ? String(daysRemaining) : '',
         },
       }),
     });
@@ -260,6 +289,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
           previous_qty: currentQty,
           extra_seats: extraSeats,
           expand_seats: mode === 'expand_seats',
+          days_remaining: daysRemaining,
+          period_days: periodDays,
+          amount_rupees: amountRupees,
         },
       })
       .select('id')
@@ -280,6 +312,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
         previousQty: currentQty,
         extraSeats,
         amountRupees,
+        daysRemaining,
+        periodDays,
+        coveredUntil: periodEnd,
         rupeesPerVehicle: rupeesPerVehicleYear(),
         description,
       },

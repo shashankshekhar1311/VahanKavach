@@ -65,3 +65,57 @@ export function billingPeriodDays(): number {
 export function listRupeesPerVehicleYear(): number {
   return LIST_RUPEES_PER_VEHICLE_YEAR;
 }
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Whole days left until periodEnd (min 1 if still in the future). */
+export function daysRemainingUntil(
+  periodEnd: string | Date,
+  now = new Date(),
+): number {
+  const end = periodEnd instanceof Date ? periodEnd : new Date(periodEnd);
+  if (Number.isNaN(end.getTime())) return 0;
+  const ms = end.getTime() - now.getTime();
+  if (ms <= 0) return 0;
+  return Math.max(1, Math.ceil(ms / MS_PER_DAY));
+}
+
+/**
+ * Mid-cycle Pro expand: ₹399 × seats × (daysLeft / periodDays), rounded to ₹.
+ * Returns paise for Razorpay (min 100 = ₹1).
+ */
+export function prorateExpandSeatPaise(
+  extraSeats: number,
+  periodEnd: string | Date,
+  opts?: { now?: Date; periodDays?: number },
+): {
+  amountPaise: number;
+  amountRupees: number;
+  daysRemaining: number;
+  periodDays: number;
+  fullYearPaise: number;
+} {
+  const extra = Math.max(1, Math.floor(extraSeats));
+  const periodDays = Math.max(1, opts?.periodDays ?? billingPeriodDays());
+  const unitPaise = billingPaisePerVehicleYear();
+  const fullYearPaise = extra * unitPaise;
+  const daysRemaining = daysRemainingUntil(periodEnd, opts?.now ?? new Date());
+  if (daysRemaining <= 0) {
+    return {
+      amountPaise: fullYearPaise,
+      amountRupees: fullYearPaise / 100,
+      daysRemaining: 0,
+      periodDays,
+      fullYearPaise,
+    };
+  }
+  const rawRupees = (fullYearPaise / 100) * (daysRemaining / periodDays);
+  const amountRupees = Math.max(1, Math.round(rawRupees));
+  return {
+    amountPaise: amountRupees * 100,
+    amountRupees,
+    daysRemaining,
+    periodDays,
+    fullYearPaise,
+  };
+}

@@ -8,6 +8,7 @@ import {
   ANNUAL_PREPAID_RUPEES_PER_VEHICLE,
   annualTotalRupees,
   pricingSubcopy,
+  prorateExpandSeatRupees,
 } from "@/lib/pricing";
 import { loadRazorpayCheckout } from "@/lib/razorpay";
 import { supabase } from "@/lib/supabase";
@@ -207,9 +208,10 @@ export function BillingPanel({
     expandExtra > 0 &&
     Boolean(periodEnd) &&
     new Date(periodEnd!).getTime() > Date.now();
-  const total = canExpandSeats
-    ? expandExtra * ANNUAL_PREPAID_RUPEES_PER_VEHICLE
-    : annualTotalRupees(qty);
+  const expandQuote = canExpandSeats
+    ? prorateExpandSeatRupees(expandExtra, periodEnd)
+    : null;
+  const total = expandQuote ? expandQuote.rupees : annualTotalRupees(qty);
 
   if (mode === "manage") {
     return (
@@ -280,8 +282,8 @@ export function BillingPanel({
               />
             </label>
             <span className="text-[11px] text-zinc-500">
-              {canExpandSeats
-                ? `+${expandExtra} · ₹${total}`
+              {expandQuote
+                ? `+${expandExtra} · ₹${total} for ${expandQuote.daysRemaining}d left`
                 : `₹${total}/year`}
             </span>
             <button

@@ -4,7 +4,10 @@ import { useState } from "react";
 import { CreditCard, X } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { Spinner } from "@/components/ui/Spinner";
-import { ANNUAL_PREPAID_RUPEES_PER_VEHICLE } from "@/lib/pricing";
+import {
+  ANNUAL_PREPAID_RUPEES_PER_VEHICLE,
+  prorateExpandSeatRupees,
+} from "@/lib/pricing";
 import { loadRazorpayCheckout } from "@/lib/razorpay";
 import { supabase } from "@/lib/supabase";
 
@@ -13,6 +16,8 @@ interface AddProSeatBannerProps {
   coveredSeats: number;
   /** Total seats required after this add (usually garage + 1). */
   seatsNeeded: number;
+  /** Shared Pro period end — late seats cover only until this date. */
+  periodEnd?: string | null;
   onDismiss: () => void;
   /** Called after seats are expanded (mock or paid). */
   onActivated: () => void | Promise<void>;
@@ -20,12 +25,13 @@ interface AddProSeatBannerProps {
 }
 
 /**
- * Phase 1: expand existing Pro by charging only extra seats (₹399 × N),
- * keeping the current annual window.
+ * Mid-cycle Pro expand: charge rounded ₹ for remaining days only;
+ * new seats share the same renewal date (no fresh full year).
  */
 export function AddProSeatBanner({
   coveredSeats,
   seatsNeeded,
+  periodEnd,
   onDismiss,
   onActivated,
   onSeeOtherPlans,
@@ -36,7 +42,14 @@ export function AddProSeatBanner({
 
   const needed = Math.max(seatsNeeded, coveredSeats + 1, 1);
   const extra = Math.max(1, needed - Math.max(coveredSeats, 0));
-  const deltaTotal = extra * ANNUAL_PREPAID_RUPEES_PER_VEHICLE;
+  const quote = prorateExpandSeatRupees(extra, periodEnd);
+  const coveredLabel = periodEnd
+    ? new Date(periodEnd).toLocaleDateString("en-IN", {
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
+    : null;
 
   async function handleAddSeats() {
     if (!user) return;
@@ -66,6 +79,7 @@ export function AddProSeatBanner({
           extraSeats?: number;
           vehicleQty?: number;
           amountRupees?: number;
+          daysRemaining?: number;
         };
       } | null;
 
@@ -74,10 +88,12 @@ export function AddProSeatBanner({
         throw new Error(payload?.error ?? "Checkout failed");
       }
 
+      const charged = payload.data.amountRupees ?? quote.rupees;
+
       if (payload.data.mock) {
         setMessage(
           payload.data.message ??
-            `Added ${extra} seat(s) — continuing Protect…`,
+            `Added ${extra} seat(s) for ₹${charged} — continuing Protect…`,
         );
         await onActivated();
         return;
@@ -93,7 +109,7 @@ export function AddProSeatBanner({
         name: "VahanKavach",
         description:
           payload.data.description ??
-          `Add ${extra} Pro seat(s)`,
+          `Add ${extra} Pro seat(s) · ₹${charged}`,
         order_id: payload.data.orderId,
         prefill: {
           email: user.email ?? undefined,
@@ -126,12 +142,23 @@ export function AddProSeatBanner({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-zinc-100">
-            Add {extra} Pro seat{extra > 1 ? "s" : ""} · ₹{deltaTotal}
+            Add {extra} Pro seat{extra > 1 ? "s" : ""} · ₹{quote.rupees}
           </p>
           <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-400">
-            Plan covers {Math.max(coveredSeats, 0)} · expand to {needed} at ₹
-            {ANNUAL_PREPAID_RUPEES_PER_VEHICLE}/extra seat. Same renewal date —
-            you only pay for the new seat{extra > 1 ? "s" : ""}.
+            {quote.daysRemaining > 0 && coveredLabel ? (
+              <>
+                Rounded for {quote.daysRemaining} day
+                {quote.daysRemaining > 1 ? "s" : ""} left until {coveredLabel}{" "}
+                (₹{ANNUAL_PREPAID_RUPEES_PER_VEHICLE}/yr × {extra} ×{" "}
+                {quote.daysRemaining}/{quote.periodDays}). Same renewal as your
+                plan — not a new full year.
+              </>
+            ) : (
+              <>
+                Expand to {needed} seats at ₹
+                {ANNUAL_PREPAID_RUPEES_PER_VEHICLE}/vehicle/year.
+              </>
+            )}
           </p>
         </div>
         <button
@@ -156,7 +183,7 @@ export function AddProSeatBanner({
           ) : (
             <CreditCard className="h-3.5 w-3.5" />
           )}
-          {busy ? "Opening checkout…" : `Pay ₹${deltaTotal} · add seat`}
+          {busy ? "Opening checkout…" : `Pay ₹${quote.rupees} · add seat`}
         </button>
         {onSeeOtherPlans ? (
           <button

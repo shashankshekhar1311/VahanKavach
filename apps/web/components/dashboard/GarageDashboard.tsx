@@ -426,6 +426,7 @@ export function GarageDashboard() {
             seatsNeeded={
               billingQtyHint ?? Math.max(vehicles.length + 1, 1)
             }
+            periodEnd={billing?.periodEnd}
             onDismiss={() => {
               setShowAddSeat(false);
               setPendingProtect(null);
