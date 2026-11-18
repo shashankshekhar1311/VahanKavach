@@ -378,11 +378,6 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
               </button>
             )}
           </div>
-          {deepLink && !linked && (
-            <p className="w-full truncate font-mono text-[10px] text-zinc-600" title={deepLink}>
-              {deepLink}
-            </p>
-          )}
         </div>
       )}
 
