@@ -27,6 +27,12 @@ export function listAnnualTotalRupees(vehicleQty: number): number {
   return Math.max(1, vehicleQty) * LIST_RUPEES_PER_VEHICLE_YEAR;
 }
 
+/** Unit price × qty for any paid tier (free → 0). */
+export function planTotalRupees(tier: PlanTier, vehicleQty = 1): number {
+  if (tier === 'free') return 0;
+  return Math.max(1, vehicleQty) * PLAN_PRICES_RUPEES[tier];
+}
+
 export function pricingHeadline(vehicleQty = 1): string {
   const qty = Math.max(1, vehicleQty);
   if (qty === 1) {
@@ -38,8 +44,8 @@ export function pricingHeadline(vehicleQty = 1): string {
 export function pricingSubcopy(vehicleQty = 1): string {
   const qty = Math.max(1, vehicleQty);
   return (
-    `Ad-hoc ₹${ADHOC_AUDIT_RUPEES} · Fleet ₹${FLEET_PASS_RUPEES}/${FLEET_PASS_DAYS}d · ` +
-    `Pro ₹${ANNUAL_PREPAID_RUPEES_PER_VEHICLE}/yr (challan every ${CHALLAN_POLL_DAYS}d)` +
+    `Ad-hoc ₹${ADHOC_AUDIT_RUPEES}/credit · Fleet ₹${FLEET_PASS_RUPEES}/vehicle/${FLEET_PASS_DAYS}d · ` +
+    `Pro ₹${ANNUAL_PREPAID_RUPEES_PER_VEHICLE}/vehicle/yr (challan every ${CHALLAN_POLL_DAYS}d)` +
     (qty > 1 ? ` · ${qty} vehicles` : '')
   );
 }

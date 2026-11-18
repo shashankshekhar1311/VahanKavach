@@ -1,5 +1,6 @@
 /**
- * Multi-tier plans: free | adhoc_audit (₹19) | fleet_pass (₹99/7d) | pro_annual (₹399/yr).
+ * Multi-tier plans (unit prices × vehicleQty):
+ *   free | adhoc_audit (₹19/credit) | fleet_pass (₹99/vehicle/7d) | pro_annual (₹399/vehicle/yr).
  * Pro: challan poll every 10 days + alert on new finds.
  * Live upstream sync is gated by assert_and_consume_live_sync (DB).
  */
@@ -76,7 +77,7 @@ export class LiveSyncEntitlementError extends Error {
     super(
       message ??
         'Live VAHAN sync requires a paid plan or scan credit. ' +
-          'Buy Ad-hoc Audit (₹19), Fleet Pass (₹99/7d), or Kavach Pro (₹399/yr). ' +
+          'Buy Ad-hoc (₹19/credit), Fleet Pass (₹99/vehicle/7d), or Kavach Pro (₹399/vehicle/yr). ' +
           'Free tier supports manual date tracking only.',
     );
     this.name = 'LiveSyncEntitlementError';

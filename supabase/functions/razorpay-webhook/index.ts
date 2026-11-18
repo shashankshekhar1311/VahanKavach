@@ -2,7 +2,8 @@
  * razorpay-webhook — payment.captured / order.paid
  *
  * Grants scan credits / plan windows for:
- *   adhoc_audit ₹19 · fleet_pass ₹99/7d · pro_annual ₹399/yr
+ *   adhoc_audit ₹19/credit · fleet_pass ₹99/vehicle/7d · pro_annual ₹399/vehicle/yr
+ *   (order total = unit × vehicle_qty for every paid tier)
  *
  * verify_jwt = false; requires X-Razorpay-Signature (HMAC SHA256 of raw body).
  * Idempotent across retries and dual event delivery (payment.captured + order.paid).
@@ -231,10 +232,8 @@ function expectedPaiseForTier(
   vehicleQty: number,
 ): number {
   const qty = Math.max(1, vehicleQty);
-  if (tier === 'pro_annual') return PLAN_PRICE_PAISE.pro_annual * qty;
-  if (tier === 'fleet_pass') return PLAN_PRICE_PAISE.fleet_pass;
-  if (tier === 'adhoc_audit') return PLAN_PRICE_PAISE.adhoc_audit;
-  return 0;
+  if (tier === 'free') return 0;
+  return PLAN_PRICE_PAISE[tier] * qty;
 }
 
 /** Exact paise match (allow ±1 paise only for floating conversion noise). */

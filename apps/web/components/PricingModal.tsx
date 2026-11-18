@@ -14,12 +14,9 @@ import {
 import { useAuth } from "@/components/auth/AuthProvider";
 import { Spinner } from "@/components/ui/Spinner";
 import {
-  ADHOC_AUDIT_RUPEES,
   ANNUAL_PREPAID_RUPEES_PER_VEHICLE,
-  annualTotalRupees,
   FLEET_PASS_DAYS,
-  FLEET_PASS_RUPEES,
-  PLAN_PRICES_RUPEES,
+  planTotalRupees,
   type PlanTier,
 } from "@/lib/pricing";
 import {
@@ -41,13 +38,13 @@ const TIER_COPY: Record<
 > = {
   adhoc_audit: {
     eyebrow: "Ad-hoc Audit",
-    title: "One live sync",
-    body: "Pay once for a single paid VAHAN + challan pull. Ideal for a quick check.",
+    title: "Live sync credits",
+    body: "₹19 per credit — one paid VAHAN + challan pull each. Buy as many as you need.",
     benefits: [
       {
         icon: Zap,
-        title: "1 scan credit",
-        body: "Burns one credit on the next live Protect / refresh.",
+        title: "1 credit = 1 live sync",
+        body: "Burns one credit on each live Protect / refresh.",
       },
       {
         icon: Shield,
@@ -59,12 +56,12 @@ const TIER_COPY: Record<
   fleet_pass: {
     eyebrow: "Fleet Pass",
     title: `${FLEET_PASS_DAYS}-day burst cover`,
-    body: "Live sync window for a week — great for short trips or fleet spikes.",
+    body: "₹99 per vehicle for a week of live sync — short trips or fleet spikes.",
     benefits: [
       {
         icon: Gauge,
-        title: "Burst monitoring",
-        body: `Full live sync window for ${FLEET_PASS_DAYS} days (up to 10 vehicles).`,
+        title: "Per-vehicle burst window",
+        body: `Full live sync for ${FLEET_PASS_DAYS} days on each vehicle you cover.`,
       },
       {
         icon: BellRing,
@@ -131,9 +128,11 @@ export function PricingModal({
   if (!open) return null;
 
   const copy = TIER_COPY[tier];
-  const unit = PLAN_PRICES_RUPEES[tier];
-  const total =
-    tier === "pro_annual" ? annualTotalRupees(qty) : unit;
+  const total = planTotalRupees(tier, qty);
+  const qtyLabel =
+    tier === "adhoc_audit"
+      ? `${qty} credit${qty > 1 ? "s" : ""}`
+      : `${qty} vehicle${qty > 1 ? "s" : ""}`;
 
   async function startCheckout() {
     if (!user) return;
@@ -147,7 +146,7 @@ export function PricingModal({
         {
           body: {
             tier,
-            vehicleQty: tier === "pro_annual" ? qty : 1,
+            vehicleQty: qty,
           },
         },
       );
@@ -272,9 +271,9 @@ export function PricingModal({
 
   const ctaLabel =
     tier === "adhoc_audit"
-      ? `Pay ₹${ADHOC_AUDIT_RUPEES} · Get 1 credit`
+      ? `Pay ₹${total} · ${qtyLabel}`
       : tier === "fleet_pass"
-        ? `Pay ₹${FLEET_PASS_RUPEES} · ${FLEET_PASS_DAYS}-day pass`
+        ? `Pay ₹${total} · ${qtyLabel} · ${FLEET_PASS_DAYS}d`
         : `Pay ₹${total} · Get Pro`;
 
   return (
@@ -337,10 +336,10 @@ export function PricingModal({
             ₹{total}
             <span className="ml-1 text-xs font-medium text-zinc-500">
               {tier === "pro_annual"
-                ? `/ year · ${qty} vehicle${qty > 1 ? "s" : ""}`
+                ? `/ year · ${qtyLabel}`
                 : tier === "fleet_pass"
-                  ? ` / ${FLEET_PASS_DAYS} days`
-                  : " one-time"}
+                  ? ` / ${FLEET_PASS_DAYS}d · ${qtyLabel}`
+                  : ` one-time · ${qtyLabel}`}
             </span>
           </p>
         </div>
@@ -362,9 +361,9 @@ export function PricingModal({
         </ul>
 
         <div className="space-y-2 border-t border-zinc-800 px-5 py-4 pb-6">
-          {tier === "pro_annual" && !profile?.is_pro && !success ? (
+          {!success ? (
             <label className="flex items-center justify-between gap-2 text-[11px] text-zinc-400">
-              Vehicles to cover
+              {tier === "adhoc_audit" ? "Credits to buy" : "Vehicles to cover"}
               <input
                 type="number"
                 min={Math.max(vehicleQty, 1)}

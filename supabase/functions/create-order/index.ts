@@ -6,7 +6,8 @@
  *   vehicleQty?: number
  * }
  *
- * Prices: adhoc ₹19 · fleet ₹99/7d · pro ₹399/yr
+ * Prices (per vehicle/credit): adhoc ₹19 · fleet ₹99/7d · pro ₹399/yr
+ * Order total = unit × vehicleQty for every paid tier.
  * Writes public.payments (+ legacy public.orders for pro_annual).
  */
 
@@ -123,18 +124,19 @@ Deno.serve(async (req: Request): Promise<Response> => {
     });
 
     const owned = await countUserVehicles(admin, user.id);
-    const vehicleQty =
-      tier === 'pro_annual'
-        ? Math.max(parsed.data.vehicleQty ?? 0, owned, 1)
-        : Math.max(parsed.data.vehicleQty ?? 1, 1);
+    const vehicleQty = Math.max(parsed.data.vehicleQty ?? 0, owned, 1);
 
     const unitPaise = planPricePaise(tier);
-    const amountPaise =
-      tier === 'pro_annual' ? unitPaise * vehicleQty : unitPaise;
+    const amountPaise = unitPaise * vehicleQty;
     const amountRupees = amountPaise / 100;
-    const description = `${planDisplayName(tier)} — ₹${PLAN_PRICE_RUPEES[tier]}${
-      tier === 'pro_annual' ? `/yr × ${vehicleQty}` : tier === 'fleet_pass' ? '/7d' : ''
-    }`;
+    const unitLabel =
+      tier === 'pro_annual'
+        ? `/yr × ${vehicleQty}`
+        : tier === 'fleet_pass'
+          ? `/7d × ${vehicleQty}`
+          : ` × ${vehicleQty}`;
+    const description =
+      `${planDisplayName(tier)} — ₹${PLAN_PRICE_RUPEES[tier]}${unitLabel}`;
 
     await writeAuditLog(admin, {
       userId: user.id,

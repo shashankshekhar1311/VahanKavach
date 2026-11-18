@@ -15,6 +15,7 @@ import {
   BillingPanel,
   type BillingSnapshot,
 } from "./BillingPanel";
+import { AddProSeatBanner } from "./AddProSeatBanner";
 import { InstallAppBanner } from "./InstallAppBanner";
 import { NotificationPreferences } from "./NotificationPreferences";
 import { PlansStrip } from "./PlansStrip";
@@ -49,6 +50,7 @@ export function GarageDashboard() {
   const [pricingOpen, setPricingOpen] = useState(false);
   const [pricingTier, setPricingTier] = useState<CheckoutTier>("pro_annual");
   const [showPlans, setShowPlans] = useState(false);
+  const [showAddSeat, setShowAddSeat] = useState(false);
   const [billing, setBilling] = useState<BillingSnapshot | null>(null);
 
   const isSubscribed = Boolean(profile?.is_pro || billing?.isActive);
@@ -62,6 +64,14 @@ export function GarageDashboard() {
   function isEntitlementBanner(message: string): boolean {
     return /live vahan|scan credit|paid plan|adhoc|fleet pass|kavach pro|payment required/i.test(
       message,
+    );
+  }
+
+  /** Active Pro/trial with seat inventory — expand same plan, don't re-pick tiers. */
+  function hasProSeatPlan(): boolean {
+    return Boolean(
+      profile?.is_pro ||
+        (billing?.isActive && (billing.vehicleQty > 0 || billing.status === "trial")),
     );
   }
 
@@ -249,15 +259,24 @@ export function GarageDashboard() {
       await loadGarage();
     } catch (err) {
       const message = err instanceof Error ? err.message : "Protect failed";
+      const qtyMatch = message.match(/vehicle #(\d+)/i);
+      const seatsNeeded = qtyMatch
+        ? Number(qtyMatch[1])
+        : vehicles.length + 1;
+      setBillingQtyHint(seatsNeeded);
+
       if (isEntitlementBanner(message)) {
-        setShowPlans(true);
         setBanner(null);
-        setBillingQtyHint((q) => q ?? vehicles.length + 1);
+        if (hasProSeatPlan()) {
+          setShowAddSeat(true);
+          setShowPlans(false);
+        } else {
+          setShowPlans(true);
+          setShowAddSeat(false);
+        }
       } else {
         setBanner(message);
       }
-      const qtyMatch = message.match(/vehicle #(\d+)/i);
-      if (qtyMatch) setBillingQtyHint(Number(qtyMatch[1]));
       throw err;
     } finally {
       setProtecting(false);
@@ -371,18 +390,39 @@ export function GarageDashboard() {
           </p>
         )}
 
-        {(showPlans || !isSubscribed) && (
+        {showAddSeat && isSubscribed ? (
+          <AddProSeatBanner
+            coveredSeats={billing?.vehicleQty ?? 0}
+            seatsNeeded={
+              billingQtyHint ?? Math.max(vehicles.length + 1, 1)
+            }
+            onDismiss={() => setShowAddSeat(false)}
+            onActivated={() => {
+              setShowAddSeat(false);
+              void refreshProfile();
+              setBanner(
+                "Pro seats updated — try Protect again on the new vehicle.",
+              );
+            }}
+            onSeeOtherPlans={() => {
+              setShowAddSeat(false);
+              setShowPlans(true);
+            }}
+          />
+        ) : null}
+
+        {(showPlans || !isSubscribed) && !showAddSeat ? (
           <PlansStrip
             title={showPlans ? "Live sync needs a plan" : "Plans"}
             subtitle={
               showPlans
                 ? "Free tracking stays on. Pick a credit or pass for live VAHAN sync."
-                : "₹19 once · ₹99/7d · ₹399/yr — challan every 10 days, alert if found."
+                : "₹19/credit · ₹99/vehicle/7d · ₹399/vehicle/yr — challan every 10 days, alert if found."
             }
             busy={protecting}
             onSelect={(tier) => openPlans(tier)}
           />
-        )}
+        ) : null}
 
         {isSubscribed ? (
           <>
@@ -482,6 +522,7 @@ export function GarageDashboard() {
           void refreshProfile();
           setPricingOpen(false);
           setShowPlans(false);
+          setShowAddSeat(false);
           setBanner(
             tier === "pro_annual"
               ? "Kavach Pro activated — annual cover is on."
