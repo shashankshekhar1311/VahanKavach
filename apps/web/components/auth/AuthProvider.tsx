@@ -28,7 +28,7 @@ async function fetchProfile(userId: string): Promise<Profile | null> {
   const { data, error } = await supabase
     .from("profiles")
     .select(
-      "id, phone_number, full_name, city, is_pro, preferred_channel, telegram_chat_id, telegram_link_token, signal_number",
+      "id, phone_number, full_name, city, is_pro, preferred_channel, telegram_chat_id, telegram_link_token, telegram_username, signal_number",
     )
     .eq("id", userId)
     .maybeSingle();

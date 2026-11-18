@@ -222,7 +222,7 @@ export class TelegramNotificationProvider implements INotificationProvider {
     const chatId = payload.telegramChatId?.trim();
     if (!chatId) {
       throw new TelegramProviderError(
-        'telegram_chat_id is missing; link Telegram via /start <token> first',
+        'telegram_chat_id is missing; open Connect Telegram in the app (t.me/<bot>?start=<token>)',
         422,
       );
     }
@@ -248,7 +248,7 @@ export class TelegramNotificationProvider implements INotificationProvider {
     const chatId = payload.telegramChatId?.trim();
     if (!chatId) {
       throw new TelegramProviderError(
-        'telegram_chat_id is missing; link Telegram via /start <token> first',
+        'telegram_chat_id is missing; open Connect Telegram in the app (t.me/<bot>?start=<token>)',
         422,
       );
     }

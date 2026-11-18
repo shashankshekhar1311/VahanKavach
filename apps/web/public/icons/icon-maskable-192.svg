@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="VahanKavach">
+  <!-- Maskable 192: full-bleed opaque brand surface; emblem inside ~80% safe zone. -->
+  <rect width="192" height="192" fill="#09090b"/>
+  <!-- Safe zone guide diameter H 153.6; emblem inset to ~20% margins -->
+  <path d="M96 36 L147 55.5 V100.5 C147 132 123 151.5 96 160.5 C69 151.5 45 132 45 100.5 V55.5 Z"
+        fill="#064e3b" stroke="#10b981" stroke-width="3"/>
+  <!-- VK monogram as paths (no system font dependency for rasterization) -->
+  <path fill="#ecfdf5"
+        d="M62 78 L74 78 L86 112 L98 78 L110 78 L92 126 H80 Z
+           M112 78 H124 V126 H112 Z
+           M124 78 H148 L136 98 L150 126 H136 L128 108 L124 114 Z"/>
+</svg>

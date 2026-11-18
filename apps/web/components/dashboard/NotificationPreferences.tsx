@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
@@ -15,14 +15,27 @@ const CHANNELS: Array<{
   { id: "WHATSAPP", label: "WhatsApp", enabled: false },
 ];
 
+const POLL_MS = 2500;
+const POLL_MAX_MS = 2 * 60 * 1000;
+
 function randomLinkToken(): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
   return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** Prefer USERNAME env; fall back to BOT_NAME. Always strip leading @. */
+function telegramBotUsername(): string | null {
+  const raw =
+    process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME?.trim() ||
+    process.env.NEXT_PUBLIC_TELEGRAM_BOT_NAME?.trim() ||
+    "";
+  const bot = raw.replace(/^@+/, "").trim();
+  return bot.length > 0 ? bot : null;
+}
+
 function telegramDeepLink(token: string): string | null {
-  const bot = process.env.NEXT_PUBLIC_TELEGRAM_BOT_NAME?.replace(/^@/, "").trim();
+  const bot = telegramBotUsername();
   if (!bot || !token) return null;
   return `https://t.me/${bot}?start=${encodeURIComponent(token)}`;
 }
@@ -37,6 +50,8 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
   const [message, setMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [pendingLink, setPendingLink] = useState(false);
+  const pollStartedAt = useRef<number | null>(null);
 
   const channel = profile?.preferred_channel ?? "TELEGRAM";
   const linked = Boolean(profile?.telegram_chat_id);
@@ -46,7 +61,18 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
 
   useEffect(() => {
     if (!linked) setExpanded(true);
+    if (linked) {
+      setPendingLink(false);
+      pollStartedAt.current = null;
+    }
   }, [linked]);
+
+  // Pre-mint link token so the t.me deep link is ready for <a target="_blank">.
+  useEffect(() => {
+    if (!user || linked || profile?.telegram_link_token) return;
+    void ensureTelegramToken().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when user/link state changes
+  }, [user, linked, profile?.telegram_link_token]);
 
   // Park WhatsApp / Signal — migrate preference back to Telegram.
   useEffect(() => {
@@ -60,6 +86,44 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
       await refreshProfile();
     })();
   }, [user, channel, refreshProfile]);
+
+  // When a link is pending, refresh on focus / visibility and poll briefly.
+  useEffect(() => {
+    if (!user || linked || !pendingLink) return;
+
+    if (pollStartedAt.current === null) {
+      pollStartedAt.current = Date.now();
+    }
+
+    const refreshIfNeeded = () => {
+      void refreshProfile();
+    };
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") refreshIfNeeded();
+    };
+
+    window.addEventListener("focus", refreshIfNeeded);
+    document.addEventListener("visibilitychange", onVisible);
+
+    const interval = window.setInterval(() => {
+      const started = pollStartedAt.current ?? Date.now();
+      if (Date.now() - started > POLL_MAX_MS) {
+        setPendingLink(false);
+        pollStartedAt.current = null;
+        return;
+      }
+      if (document.visibilityState === "visible") {
+        refreshIfNeeded();
+      }
+    }, POLL_MS);
+
+    return () => {
+      window.removeEventListener("focus", refreshIfNeeded);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.clearInterval(interval);
+    };
+  }, [user, linked, pendingLink, refreshProfile]);
 
   async function setPreferredChannel(next: NotificationChannel) {
     const meta = CHANNELS.find((c) => c.id === next);
@@ -106,11 +170,13 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
       const url = telegramDeepLink(token);
       if (!url) {
         throw new Error(
-          "Set NEXT_PUBLIC_TELEGRAM_BOT_NAME in .env.local to enable Connect Telegram",
+          "Set NEXT_PUBLIC_TELEGRAM_BOT_USERNAME (or NEXT_PUBLIC_TELEGRAM_BOT_NAME) in .env.local",
         );
       }
 
       window.open(url, "_blank", "noopener,noreferrer");
+      setPendingLink(true);
+      pollStartedAt.current = Date.now();
       setMessage("Opened Telegram — tap Start to finish linking.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Connect failed");
@@ -128,12 +194,16 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
       if (!token) throw new Error("Could not create link token");
       const url = telegramDeepLink(token);
       if (!url) {
-        throw new Error("Set NEXT_PUBLIC_TELEGRAM_BOT_NAME in .env.local");
+        throw new Error(
+          "Set NEXT_PUBLIC_TELEGRAM_BOT_USERNAME (or NEXT_PUBLIC_TELEGRAM_BOT_NAME) in .env.local",
+        );
       }
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-      setMessage("Deep link copied.");
+      setPendingLink(true);
+      pollStartedAt.current = Date.now();
+      setMessage("Deep link copied — open it in Telegram, then return here.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Copy failed");
     } finally {
@@ -150,12 +220,14 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
         .from("profiles")
         .update({
           telegram_chat_id: null,
+          telegram_username: null,
           telegram_link_token: null,
         })
         .eq("id", user.id);
       if (error) throw error;
       await refreshProfile();
       setExpanded(true);
+      setPendingLink(false);
       setMessage("Telegram unlinked.");
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Unlink failed");
@@ -163,6 +235,12 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
       setBusy(false);
     }
   }
+
+  const linkedLabel = profile?.telegram_username
+    ? `@${profile.telegram_username}`
+    : profile?.telegram_chat_id
+      ? `chat ${profile.telegram_chat_id}`
+      : "Connected";
 
   return (
     <section
@@ -231,11 +309,12 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
           <p className="min-w-0 flex-1 text-[11px] text-zinc-500">
             {linked ? (
               <>
-                Linked
-                {profile?.telegram_chat_id
-                  ? ` · ${profile.telegram_chat_id}`
-                  : ""}
+                <span className="font-medium text-safety">Connected</span>
+                {" · "}
+                {linkedLabel}
               </>
+            ) : pendingLink ? (
+              <>Waiting for Telegram… return here after tapping Start.</>
             ) : (
               <>Connect the bot to receive alerts.</>
             )}
@@ -243,15 +322,36 @@ export function NotificationPreferences({ profile }: NotificationPreferencesProp
           <div className="flex flex-wrap gap-1.5">
             {!linked && (
               <>
-                <button
-                  type="button"
-                  disabled={busy || !user}
-                  onClick={() => void handleConnectTelegram()}
-                  className="inline-flex items-center gap-1 rounded-md bg-safety px-2.5 py-1 text-[11px] font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-50"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  Connect
-                </button>
+                {deepLink ? (
+                  <a
+                    href={deepLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={() => {
+                      setPendingLink(true);
+                      pollStartedAt.current = Date.now();
+                      setMessage(
+                        "Opened Telegram — tap Start to finish linking.",
+                      );
+                    }}
+                    className={`inline-flex items-center gap-1 rounded-md bg-safety px-2.5 py-1 text-[11px] font-semibold text-zinc-950 transition hover:bg-emerald-400 ${
+                      busy || !user ? "pointer-events-none opacity-50" : ""
+                    }`}
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Connect
+                  </a>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={busy || !user}
+                    onClick={() => void handleConnectTelegram()}
+                    className="inline-flex items-center gap-1 rounded-md bg-safety px-2.5 py-1 text-[11px] font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:opacity-50"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    Connect
+                  </button>
+                )}
                 <button
                   type="button"
                   disabled={busy || !user}

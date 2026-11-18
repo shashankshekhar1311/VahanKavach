@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Copy, Trash2 } from "lucide-react";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { useAuth } from "@/components/auth/AuthProvider";
 import { MobileShell } from "@/components/ui/MobileShell";
@@ -20,12 +20,83 @@ export default function SettingsPage() {
 }
 
 function SettingsContent() {
-  const { profile, signOut, user } = useAuth();
+  const { profile, refreshProfile, signOut, user } = useAuth();
   const router = useRouter();
   const [modalOpen, setModalOpen] = useState(false);
   const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [nameDraft, setNameDraft] = useState("");
+  const [savingName, setSavingName] = useState(false);
+  const [nameMsg, setNameMsg] = useState<string | null>(null);
+  const [copiedId, setCopiedId] = useState(false);
+  const [showSupportId, setShowSupportId] = useState(false);
+
+  useEffect(() => {
+    setNameDraft(profile?.full_name?.trim() ?? "");
+  }, [profile?.full_name]);
+
+  // Backfill profiles.phone_number from auth phone when missing (OTP signups).
+  useEffect(() => {
+    if (!user?.id) return;
+    const authPhone = user.phone?.trim() || null;
+    if (!authPhone) return;
+    if (profile?.phone_number?.trim()) return;
+
+    let cancelled = false;
+    void (async () => {
+      const { error: updErr } = await supabase
+        .from("profiles")
+        .update({ phone_number: authPhone })
+        .eq("id", user.id);
+      if (cancelled || updErr) return;
+      await refreshProfile();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.id, user?.phone, profile?.phone_number, refreshProfile]);
+
+  const displayPhone =
+    profile?.phone_number?.trim() || user?.phone?.trim() || null;
+  const phoneLabel = displayPhone
+    ? formatPhoneDisplay(displayPhone)
+    : "Not set";
+  const nameDirty =
+    nameDraft.trim() !== (profile?.full_name?.trim() ?? "");
+
+  async function handleSaveName() {
+    if (!user) return;
+    const next = nameDraft.trim();
+    setSavingName(true);
+    setNameMsg(null);
+    try {
+      const { error: updErr } = await supabase
+        .from("profiles")
+        .update({ full_name: next.length > 0 ? next : null })
+        .eq("id", user.id);
+      if (updErr) throw updErr;
+      await refreshProfile();
+      setNameMsg(next ? "Name saved." : "Name cleared.");
+    } catch (err) {
+      setNameMsg(err instanceof Error ? err.message : "Could not save name");
+    } finally {
+      setSavingName(false);
+    }
+  }
+
+  async function copyAccountRef() {
+    if (!user?.id) return;
+    try {
+      await navigator.clipboard.writeText(user.id);
+      setCopiedId(true);
+      setTimeout(() => setCopiedId(false), 2000);
+    } catch {
+      setNameMsg("Could not copy account reference");
+    }
+  }
 
   async function handleDeleteAccount() {
     if (confirmText !== "DELETE") return;
@@ -86,32 +157,91 @@ function SettingsContent() {
         <h2 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
           Account
         </h2>
-        <dl className="mt-2 space-y-2 text-sm">
+        <dl className="mt-2 space-y-3 text-sm">
           <div>
             <dt className="text-[10px] uppercase tracking-wide text-zinc-600">
-              Name
+              Display name
             </dt>
-            <dd className="text-zinc-200">
-              {profile?.full_name?.trim() || "—"}
+            <dd className="mt-1 flex gap-2">
+              <input
+                type="text"
+                value={nameDraft}
+                disabled={savingName || !user}
+                onChange={(e) => {
+                  setNameMsg(null);
+                  setNameDraft(e.target.value);
+                }}
+                placeholder="Add your name"
+                maxLength={80}
+                className="min-w-0 flex-1 rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600 focus:border-safety focus:outline-none focus:ring-1 focus:ring-safety disabled:opacity-50"
+              />
+              <button
+                type="button"
+                disabled={savingName || !user || !nameDirty}
+                onClick={() => void handleSaveName()}
+                className="shrink-0 rounded-lg bg-safety/90 px-3 py-2 text-xs font-semibold text-zinc-950 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {savingName ? <Spinner className="h-3.5 w-3.5" /> : "Save"}
+              </button>
             </dd>
           </div>
           <div>
             <dt className="text-[10px] uppercase tracking-wide text-zinc-600">
               Phone
             </dt>
-            <dd className="font-mono text-zinc-200">
-              {formatPhoneDisplay(profile?.phone_number) || "—"}
+            <dd
+              className={
+                displayPhone
+                  ? "mt-0.5 font-mono text-zinc-200"
+                  : "mt-0.5 text-zinc-500"
+              }
+            >
+              {phoneLabel}
             </dd>
-          </div>
-          <div>
-            <dt className="text-[10px] uppercase tracking-wide text-zinc-600">
-              User ID
-            </dt>
-            <dd className="truncate font-mono text-[11px] text-zinc-500">
-              {user?.id ?? "—"}
-            </dd>
+            {!displayPhone ? (
+              <p className="mt-0.5 text-[10px] text-zinc-600">
+                Filled automatically when you sign in with mobile OTP.
+              </p>
+            ) : null}
           </div>
         </dl>
+
+        {nameMsg ? (
+          <p className="mt-2 text-[11px] text-zinc-500" role="status">
+            {nameMsg}
+          </p>
+        ) : null}
+
+        <div className="mt-3 border-t border-zinc-800/80 pt-2">
+          <button
+            type="button"
+            onClick={() => setShowSupportId((v) => !v)}
+            className="text-[10px] font-medium uppercase tracking-wide text-zinc-600 transition hover:text-zinc-400"
+            aria-expanded={showSupportId}
+          >
+            {showSupportId ? "Hide support reference" : "Support reference"}
+          </button>
+          {showSupportId && user?.id ? (
+            <div className="mt-1.5 flex items-center gap-2">
+              <code className="min-w-0 flex-1 truncate font-mono text-[10px] text-zinc-500">
+                {user.id}
+              </code>
+              <button
+                type="button"
+                onClick={() => void copyAccountRef()}
+                className="inline-flex shrink-0 items-center gap-1 rounded-md border border-zinc-700 px-2 py-1 text-[10px] font-medium text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+                aria-label="Copy account reference"
+              >
+                {copiedId ? (
+                  <Check className="h-3 w-3 text-safety" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+                Copy
+              </button>
+            </div>
+          ) : null}
+        </div>
       </section>
 
       <section className="mt-4 rounded-xl border border-emergency/40 bg-emergency/5 p-3">

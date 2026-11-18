@@ -62,6 +62,7 @@ interface ProfileRow {
   full_name: string | null;
   phone_number: string | null;
   telegram_chat_id: string | null;
+  telegram_username?: string | null;
   preferred_channel: string | null;
 }
 
@@ -123,10 +124,19 @@ async function handleUpdate(update: TelegramUpdate): Promise<void> {
   const chatId = String(message.chat.id);
   const text = message.text.trim();
   const supabase = createServiceClient();
+  const telegramUsername = normalizeTelegramUsername(message.from?.username);
 
-  if (text.startsWith('/start')) {
-    const token = text.slice('/start'.length).trim();
-    await handleStart(supabase, chatId, token, message.from?.first_name);
+  // Deep-link payloads arrive as `/start <token>` or `/start@BotName <token>`.
+  const startMatch = text.match(/^\/start(?:@\w+)?(?:\s+(.+))?$/i);
+  if (startMatch) {
+    const token = (startMatch[1] ?? '').trim();
+    await handleStart(
+      supabase,
+      chatId,
+      token,
+      message.from?.first_name,
+      telegramUsername,
+    );
     return;
   }
 
@@ -154,10 +164,21 @@ async function handleStart(
   chatId: string,
   token: string,
   firstName?: string,
+  telegramUsername?: string | null,
 ): Promise<void> {
   if (!token) {
     const existing = await findProfileByChatId(supabase, chatId);
     if (existing) {
+      // Refresh username if the chat is already linked.
+      if (telegramUsername) {
+        await supabase
+          .from('profiles')
+          .update({
+            telegram_username: telegramUsername,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id);
+      }
       await telegramSendText(
         chatId,
         [
@@ -170,7 +191,8 @@ async function handleStart(
     }
 
     const base = (
-      Deno.env.get('APP_BASE_URL')?.trim() || 'https://vahankavach.app'
+      Deno.env.get('APP_BASE_URL')?.trim() ||
+      'https://vahankavach.sunrisesoftwares.com'
     ).replace(/\/$/, '');
     await telegramSendText(
       chatId,
@@ -186,9 +208,12 @@ async function handleStart(
     return;
   }
 
+  // Map deep-link token → user via profiles.telegram_link_token (DB lookup, not JWT).
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, full_name, phone_number, telegram_chat_id, preferred_channel')
+    .select(
+      'id, full_name, phone_number, telegram_chat_id, telegram_username, preferred_channel',
+    )
     .eq('telegram_link_token', token)
     .maybeSingle();
 
@@ -224,6 +249,7 @@ async function handleStart(
     .from('profiles')
     .update({
       telegram_chat_id: chatId,
+      telegram_username: telegramUsername ?? null,
       telegram_link_token: null,
       preferred_channel: 'TELEGRAM',
       updated_at: new Date().toISOString(),
@@ -244,10 +270,14 @@ async function handleStart(
     firstName?.trim() ||
     'there';
 
+  const handleLine = telegramUsername
+    ? `\nTelegram: @${escapeHtml(telegramUsername)}`
+    : '';
+
   await telegramSendText(
     chatId,
     [
-      `✅ Linked, <b>${escapeHtml(name)}</b>!`,
+      `✅ Linked, <b>${escapeHtml(name)}</b>!${handleLine}`,
       '',
       'You will receive PUC &amp; compliance alerts here on Telegram.',
       'Send /status anytime for your fleet summary.',
@@ -286,7 +316,8 @@ async function handleStatus(
   const list = (vehicles ?? []) as VehicleRow[];
   if (list.length === 0) {
     const base = (
-      Deno.env.get('APP_BASE_URL')?.trim() || 'https://vahankavach.app'
+      Deno.env.get('APP_BASE_URL')?.trim() ||
+      'https://vahankavach.sunrisesoftwares.com'
     ).replace(/\/$/, '');
     await telegramSendText(
       chatId,
@@ -403,6 +434,14 @@ function describePuc(pucExpiryDate: string | null): {
 
 function formatAmount(amount: number): string {
   return amount.toLocaleString('en-IN', { maximumFractionDigits: 0 });
+}
+
+function normalizeTelegramUsername(
+  raw: string | null | undefined,
+): string | null {
+  if (!raw) return null;
+  const cleaned = String(raw).trim().replace(/^@+/, '');
+  return cleaned.length > 0 ? cleaned : null;
 }
 
 function createServiceClient(): SupabaseClient {

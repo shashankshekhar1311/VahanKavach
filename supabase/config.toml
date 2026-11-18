@@ -465,15 +465,18 @@ entrypoint = "./functions/send-puc-alert/index.ts"
 #   SIGNAL_GATEWAY_URL / SIGNAL_GATEWAY_TOKEN (optional stub gateway)
 #   APP_BASE_URL / PAYMENT_PORTAL_URL (CTA links)
 
-# Multi-channel: Telegram Bot API webhook (no JWT — Telegram cannot send one)
+# Multi-channel: Telegram Bot API webhook.
+# verify_jwt MUST stay false — Telegram cannot send a Supabase JWT.
+# Auth is enforced in-function via X-Telegram-Bot-Api-Secret-Token
+# when TELEGRAM_WEBHOOK_SECRET is set.
 [functions.telegram-webhook]
 enabled = true
 verify_jwt = false
 entrypoint = "./functions/telegram-webhook/index.ts"
 # Secrets:
 #   TELEGRAM_BOT_TOKEN
-#   TELEGRAM_WEBHOOK_SECRET (optional X-Telegram-Bot-Api-Secret-Token)
-#   APP_BASE_URL (optional)
+#   TELEGRAM_WEBHOOK_SECRET (required in prod for X-Telegram-Bot-Api-Secret-Token)
+#   APP_BASE_URL (optional; used in /start welcome + /status CTAs)
 
 # Billing: prepaid ~₹1/day/vehicle checkout
 [functions.create-billing-checkout]

@@ -15,6 +15,7 @@ import {
   BillingPanel,
   type BillingSnapshot,
 } from "./BillingPanel";
+import { InstallAppBanner } from "./InstallAppBanner";
 import { NotificationPreferences } from "./NotificationPreferences";
 import { PlansStrip } from "./PlansStrip";
 import { QuickAddVehicle } from "./QuickAddVehicle";
@@ -359,6 +360,8 @@ export function GarageDashboard() {
       <DashboardHeader profile={profile} onSignOut={handleSignOut} />
 
       <div className="mt-5 flex flex-col gap-5">
+        <InstallAppBanner />
+
         {banner && (
           <p
             className="rounded-xl border border-zinc-800 bg-zinc-900/80 px-3.5 py-2.5 text-xs leading-relaxed text-zinc-300"

@@ -27,6 +27,7 @@ export interface Profile {
   preferred_channel: NotificationChannel;
   telegram_chat_id: string | null;
   telegram_link_token: string | null;
+  telegram_username?: string | null;
   signal_number: string | null;
 }
 
