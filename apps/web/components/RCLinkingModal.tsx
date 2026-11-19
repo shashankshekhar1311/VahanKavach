@@ -13,6 +13,9 @@ interface RCLinkingModalProps {
 
 /**
  * Official 2-minute guide for seeding mobile / Aadhaar on the RC via Parivahan.
+ *
+ * Note: This modal does NOT call sync-vehicle or collect chassis for ownership.
+ * Protect / claim validation + lockout UX lives in QuickAddVehicle + sync-vehicle.
  */
 export function RCLinkingModal({
   open,

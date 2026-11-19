@@ -61,6 +61,7 @@ import {
 } from '../_shared/billing/entitlements.ts';
 import {
   assertAndConsumeLiveSync,
+  assertLiveSyncAvailable,
   LiveSyncEntitlementError,
 } from '../_shared/billing/plans.ts';
 import {
@@ -91,6 +92,9 @@ const RequestSchema = z
   });
 
 const MAX_CLAIM_REJECTS_PER_HOUR = 8;
+const CHASSIS_LOCKOUT_MAX = 3;
+const RC_NOT_FOUND_MESSAGE =
+  'RC record not found. This plate was not matched in VAHAN. Try again after 24 hours if you believe this is wrong.';
 
 const VEHICLE_SELECT =
   'id, user_id, reg_number, chassis_last_5, engine_last_5, maker_model, fuel_type, puc_expiry_date, insurance_expiry_date, fitness_expiry_date, fastag_status, fastag_bank, last_polled_at, cached_until, is_verified_owner, rc_mobile_linked, rc_aadhaar_linked, rc_contact_warning';
@@ -236,6 +240,28 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const ownedByCaller =
       Boolean(existingVehicle?.user_id) && existingVehicle?.user_id === user.id;
 
+    // --- 24h negative cache: never re-call Deepvue for known-missing plates -----
+    const negative = await getFreshNegativeLookup(admin, regNumber);
+    if (negative) {
+      await recordVehicleLookup(admin, user.id, regNumber, true);
+      return jsonResponse(
+        {
+          success: false,
+          error: RC_NOT_FOUND_MESSAGE,
+          data: {
+            code: 'RC_NOT_FOUND_CACHED',
+            reason: negative.reason,
+            expiresAt: negative.expires_at,
+          },
+        } as ApiResponse<{
+          code: string;
+          reason: string;
+          expiresAt: string;
+        }>,
+        404,
+      );
+    }
+
     // --- Hard 30-day cache (forceRefresh cannot bypass; protects API balance) -----
     if (existingVehicle && isCachedUntilFresh(existingVehicle.cached_until)) {
       await recordVehicleLookup(admin, user.id, regNumber, true);
@@ -255,6 +281,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
             existingVehicle.chassis_last_5 = chassisSubmitted;
           }
         } else if (!ownedByCaller) {
+          // Cache-first: wrong chassis never triggers a second Deepvue call.
+          const lock = await assertChassisClaimAllowed(
+            admin,
+            user.id,
+            regNumber,
+          );
           await recordClaimAttempt(
             admin,
             user.id,
@@ -262,14 +294,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
             chassisSubmitted,
             'rejected',
           );
-          return jsonResponse(
-            {
-              success: false,
-              error:
-                'Chassis last 5 does not match RC records. Check your registration certificate and try again.',
-            } satisfies ApiResponse<never>,
-            403,
+          const after = await getChassisLockoutStatus(
+            admin,
+            user.id,
+            regNumber,
           );
+          return chassisMismatchResponse(after, lock);
         }
       } else if (!ownedByCaller) {
         return jsonResponse(
@@ -311,6 +341,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
 
       await enforceDailyQuota(admin, user.id);
+      // Pre-check paid entitlement before any Deepvue spend (consume after SUCCESS).
+      await assertLiveSyncAvailable(admin, user.id);
       return await syncFromUpstream(admin, user.id, existingVehicle.id, regNumber, {
         chassisSubmitted,
         attachOwner: true,
@@ -354,8 +386,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
       );
     }
 
-    // 1. Quota check: do NOT deduct the live sync credit yet
+    const lockBefore = await assertChassisClaimAllowed(
+      admin,
+      user.id,
+      regNumber,
+    );
+
+    // Quota + paid live-sync availability BEFORE Deepvue (zero wallet drain).
     await enforceDailyQuota(admin, user.id);
+    await assertLiveSyncAvailable(admin, user.id);
 
     const provider = createVehicleDataProvider();
     let upstreamRaw: StandardVehicleCompliance;
@@ -363,6 +402,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
     try {
       upstreamRaw = await provider.getVehicleDetails(regNumber);
     } catch (upstreamErr) {
+      if (
+        upstreamErr instanceof ProviderHttpError &&
+        upstreamErr.status === 404
+      ) {
+        await upsertNegativeLookup(admin, regNumber, 'INVALID_RC_NUMBER');
+        await recordVehicleLookup(admin, user.id, regNumber, false);
+        return jsonResponse(
+          {
+            success: false,
+            error: RC_NOT_FOUND_MESSAGE,
+            data: { code: 'RC_NOT_FOUND', cachedForHours: 24 },
+          } as ApiResponse<{ code: string; cachedForHours: number }>,
+          404,
+        );
+      }
       // Upstream failed: credit is preserved untouched
       throw upstreamErr;
     }
@@ -373,7 +427,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       upstreamChassis && upstreamChassis === chassisSubmitted,
     );
 
-    // 2. Cache vehicle record immediately so subsequent attempts hit cache
+    // Cache vehicle immediately so subsequent wrong-chassis attempts hit Postgres only.
     const vehicleRow = await upsertVehicle(admin, {
       userId: isChassisMatch ? user.id : null,
       existingId: existingVehicle?.id,
@@ -385,17 +439,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     if (!isChassisMatch) {
       await recordClaimAttempt(admin, user.id, regNumber, chassisSubmitted, 'rejected');
       await recordVehicleLookup(admin, user.id, regNumber, false);
-      return jsonResponse(
-        {
-          success: false,
-          error:
-            'Chassis last 5 does not match RC records. Check your registration certificate and try again.',
-        } satisfies ApiResponse<never>,
-        403,
-      );
+      const after = await getChassisLockoutStatus(admin, user.id, regNumber);
+      return chassisMismatchResponse(after, lockBefore);
     }
 
-    // 3. Chassis verified: fetch challans, persist, THEN consume credit (zero-leakage).
+    // Chassis verified: fetch challans, persist, THEN consume credit (zero-leakage).
     await recordClaimAttempt(admin, user.id, regNumber, chassisSubmitted, 'verified');
 
     const upstreamChallans = await provider.getPendingChallans(
@@ -547,7 +595,27 @@ async function syncFromUpstream(
   userAgent: string,
 ): Promise<Response> {
   const provider = createVehicleDataProvider();
-  const upstreamRaw = await provider.getVehicleDetails(regNumber);
+  let upstreamRaw: StandardVehicleCompliance;
+  try {
+    upstreamRaw = await provider.getVehicleDetails(regNumber);
+  } catch (upstreamErr) {
+    if (
+      upstreamErr instanceof ProviderHttpError &&
+      upstreamErr.status === 404
+    ) {
+      await upsertNegativeLookup(admin, regNumber, 'INVALID_RC_NUMBER');
+      await recordVehicleLookup(admin, userId, regNumber, false);
+      return jsonResponse(
+        {
+          success: false,
+          error: RC_NOT_FOUND_MESSAGE,
+          data: { code: 'RC_NOT_FOUND', cachedForHours: 24 },
+        } as ApiResponse<{ code: string; cachedForHours: number }>,
+        404,
+      );
+    }
+    throw upstreamErr;
+  }
   const scrubbed = scrubVehicleCompliance({ ...upstreamRaw, regNumber });
 
   let isVerifiedOwner = opts.verifiedOwner;
@@ -657,6 +725,126 @@ async function countRecentRejects(
     return 0;
   }
   return count ?? 0;
+}
+
+type ChassisLockoutStatus = {
+  locked: boolean;
+  reject_count: number;
+  attempts_remaining: number;
+  retry_after_sec: number;
+};
+
+async function getChassisLockoutStatus(
+  admin: SupabaseClient,
+  userId: string,
+  regNumber: string,
+): Promise<ChassisLockoutStatus> {
+  const { data, error } = await admin.rpc('chassis_claim_lockout_status', {
+    p_user_id: userId,
+    p_reg_number: regNumber,
+  });
+  if (error) {
+    console.error('chassis_claim_lockout_status failed', error.message);
+    return {
+      locked: false,
+      reject_count: 0,
+      attempts_remaining: CHASSIS_LOCKOUT_MAX,
+      retry_after_sec: 0,
+    };
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as ChassisLockoutStatus | null;
+  return {
+    locked: Boolean(row?.locked),
+    reject_count: Number(row?.reject_count ?? 0),
+    attempts_remaining: Number(
+      row?.attempts_remaining ?? CHASSIS_LOCKOUT_MAX,
+    ),
+    retry_after_sec: Number(row?.retry_after_sec ?? 0),
+  };
+}
+
+async function assertChassisClaimAllowed(
+  admin: SupabaseClient,
+  userId: string,
+  regNumber: string,
+): Promise<ChassisLockoutStatus> {
+  const status = await getChassisLockoutStatus(admin, userId, regNumber);
+  if (status.locked) {
+    const mins = Math.max(1, Math.ceil(status.retry_after_sec / 60));
+    throw new HttpAppError(
+      `Too many wrong chassis attempts for this plate. Try again in ${mins} minute(s).`,
+      429,
+    );
+  }
+  return status;
+}
+
+function chassisMismatchResponse(
+  after: ChassisLockoutStatus,
+  _before: ChassisLockoutStatus,
+): Response {
+  const remaining = after.attempts_remaining;
+  const suffix =
+    after.locked || remaining <= 0
+      ? ` Locked for ${Math.max(1, Math.ceil(after.retry_after_sec / 60))} minute(s).`
+      : ` ${remaining} attempt${remaining === 1 ? '' : 's'} left before a 15-minute lockout.`;
+  return jsonResponse(
+    {
+      success: false,
+      error:
+        'Chassis last 5 does not match RC records. Check your registration certificate and try again.' +
+        suffix,
+      data: {
+        code: after.locked ? 'CHASSIS_LOCKOUT' : 'CHASSIS_MISMATCH',
+        attemptsRemaining: remaining,
+        retryAfterSec: after.retry_after_sec,
+      },
+    } as ApiResponse<{
+      code: string;
+      attemptsRemaining: number;
+      retryAfterSec: number;
+    }>,
+    after.locked ? 429 : 403,
+  );
+}
+
+async function getFreshNegativeLookup(
+  admin: SupabaseClient,
+  regNumber: string,
+): Promise<{ reason: string; expires_at: string } | null> {
+  const { data, error } = await admin.rpc('get_fresh_rc_negative', {
+    p_reg_number: regNumber,
+  });
+  if (error) {
+    console.error('get_fresh_rc_negative failed', error.message);
+    return null;
+  }
+  const row = (Array.isArray(data) ? data[0] : data) as {
+    reason?: string;
+    expires_at?: string;
+  } | null;
+  if (!row?.expires_at) return null;
+  return {
+    reason: row.reason ?? 'INVALID_RC_NUMBER',
+    expires_at: row.expires_at,
+  };
+}
+
+async function upsertNegativeLookup(
+  admin: SupabaseClient,
+  regNumber: string,
+  reason: string,
+  subCode?: string,
+): Promise<void> {
+  const { error } = await admin.rpc('upsert_rc_negative', {
+    p_reg_number: regNumber,
+    p_reason: reason,
+    p_sub_code: subCode ?? null,
+    p_ttl_hours: 24,
+  });
+  if (error) {
+    console.error('upsert_rc_negative failed', error.message);
+  }
 }
 
 async function upsertVehicle(

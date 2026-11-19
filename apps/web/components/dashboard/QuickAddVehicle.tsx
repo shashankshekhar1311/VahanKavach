@@ -3,7 +3,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ChevronDown, FlaskConical, Plus, ShieldPlus, X } from "lucide-react";
 import { buildVehicleConsentLabel } from "@/lib/consent";
-import { formatRegDisplay, isValidRegNumber } from "@/lib/registration";
+import {
+  formatRegDisplay,
+  isValidChassisLast5,
+  isValidRegNumber,
+} from "@/lib/registration";
 import { Spinner } from "@/components/ui/Spinner";
 
 /** Sandbox mock fixtures — chassis last-5 must match MockVehicleProvider. */
@@ -88,12 +92,12 @@ export function QuickAddVehicle({
     }
 
     if (!isValidRegNumber(value)) {
-      setError("Enter a valid plate like KA 01 AB 1234");
+      setError("Enter a valid plate like KA 01 AB 1234 or 22 BH 1234 AA");
       return;
     }
 
     const chassisLast5 = normalizeChassisInput(chassis);
-    if (chassisLast5.length !== 5) {
+    if (!isValidChassisLast5(chassisLast5)) {
       setError("Enter the last 5 characters of the chassis number from your RC.");
       return;
     }
@@ -103,9 +107,11 @@ export function QuickAddVehicle({
       setValue("");
       setChassis("");
       setConsentChecked(false);
+      setError(null);
       if (collapsed) setOpen(false);
-    } catch {
-      /* parent sets banner */
+    } catch (err) {
+      // Parent also sets garage banner; surface attempts/lockout on the form.
+      setError(err instanceof Error ? err.message : "Protect failed");
     }
   }
 
@@ -212,9 +218,10 @@ export function QuickAddVehicle({
             autoCapitalize="characters"
             autoCorrect="off"
             spellCheck={false}
-            placeholder="KA 01 AB 1234"
+            placeholder="KA 01 AB 1234 or 22 BH 1234 AA"
             value={value}
             disabled={busy}
+            aria-invalid={Boolean(error && !isValidRegNumber(value))}
             onChange={(e) => {
               setError(null);
               setValue(e.target.value.toUpperCase());

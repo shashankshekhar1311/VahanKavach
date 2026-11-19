@@ -2,12 +2,14 @@
  * Indian vehicle registration sanitization & validation.
  *
  * Accepts common user input like "ka-01 ab 1234" and normalizes to "KA01AB1234".
- * Pattern aligned with `_shared/security.ts` (strict CERT/project rule).
+ * Also accepts Bharat Series plates like "22 BH 1234 AA" → "22BH1234AA".
  */
 
-import { INDIAN_REG_STRICT_PATTERN } from '../security.ts';
-
-const REG_PATTERN = INDIAN_REG_STRICT_PATTERN;
+import {
+  INDIAN_BHARAT_SERIES_PATTERN,
+  INDIAN_REG_STRICT_PATTERN,
+  isStrictIndianVehicleNumber,
+} from '../security.ts';
 
 export class InvalidRegistrationError extends Error {
   readonly status = 400;
@@ -15,7 +17,7 @@ export class InvalidRegistrationError extends Error {
   constructor(raw: string) {
     super(
       `Invalid Indian vehicle registration format: "${raw}". ` +
-        `Expected pattern like KA01AB1234 (state + RTO + series + number).`,
+        `Expected KA01AB1234 (RTO) or 22BH1234AA (Bharat Series).`,
     );
     this.name = 'InvalidRegistrationError';
   }
@@ -32,9 +34,13 @@ export function sanitizeRegNumber(raw: string): string {
 
   const sanitized = raw.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 
-  if (!REG_PATTERN.test(sanitized)) {
+  if (!isStrictIndianVehicleNumber(sanitized)) {
     throw new InvalidRegistrationError(raw);
   }
+
+  // Touch patterns so tree-shaking keeps them referenced with security.ts.
+  void INDIAN_REG_STRICT_PATTERN;
+  void INDIAN_BHARAT_SERIES_PATTERN;
 
   return sanitized;
 }

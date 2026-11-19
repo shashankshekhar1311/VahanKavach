@@ -7,9 +7,20 @@
 
 import type { SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
-/** Strict Indian registration after strip/uppercase (project rule). */
+/** Classic RTO plate after strip/uppercase (e.g. KA01AB1234). */
 export const INDIAN_REG_STRICT_PATTERN =
   /^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$/;
+
+/** Bharat Series plate (e.g. 22BH1234AA). */
+export const INDIAN_BHARAT_SERIES_PATTERN =
+  /^[0-9]{2}BH[0-9]{4}[A-Z]{1,2}$/;
+
+export function isStrictIndianVehicleNumber(sanitized: string): boolean {
+  return (
+    INDIAN_REG_STRICT_PATTERN.test(sanitized) ||
+    INDIAN_BHARAT_SERIES_PATTERN.test(sanitized)
+  );
+}
 
 export const SECURITY_HEADERS: Record<string, string> = {
   'Content-Security-Policy': "default-src 'self'",
@@ -167,9 +178,8 @@ export async function assertUserLookupQuota(
 // ---------------------------------------------------------------------------
 
 /**
- * Strip separators, uppercase, then require strict Indian plate regex.
- * Rejects any input that does not produce a match for
- * ^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$
+ * Strip separators, uppercase, then require classic RTO or Bharat Series plate.
+ * Zero upstream spend on typos — call before any DB cache write or Deepvue call.
  */
 export function assertStrictIndianVehicleNumber(raw: unknown): string {
   if (typeof raw !== 'string' || raw.trim().length === 0) {
@@ -180,10 +190,10 @@ export function assertStrictIndianVehicleNumber(raw: unknown): string {
 
   const sanitized = raw.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
 
-  if (!INDIAN_REG_STRICT_PATTERN.test(sanitized)) {
+  if (!isStrictIndianVehicleNumber(sanitized)) {
     throw new SecurityValidationError(
       `Invalid Indian vehicle registration: rejected "${String(raw)}". ` +
-        'Expected pattern ^[A-Z]{2}[0-9]{1,2}[A-Z]{0,3}[0-9]{4}$ (e.g. KA01AB1234).',
+        'Expected KA01AB1234 or Bharat Series 22BH1234AA.',
     );
   }
 

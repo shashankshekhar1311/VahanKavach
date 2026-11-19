@@ -117,6 +117,27 @@ export async function getEffectiveTier(
 }
 
 /**
+ * Non-consuming pre-check: block Deepvue calls when free / no credits / no pass.
+ * Call this BEFORE any paid upstream request; consume only after SUCCESS.
+ */
+export async function assertLiveSyncAvailable(
+  admin: SupabaseClient,
+  userId: string,
+): Promise<void> {
+  const tier = await getEffectiveTier(admin, userId);
+  if (
+    tier === 'pro_annual' ||
+    tier === 'fleet_pass' ||
+    tier === 'adhoc_audit'
+  ) {
+    return;
+  }
+  const ent = await ensureUserEntitlement(admin, userId);
+  if (ent.scan_credits_balance > 0) return;
+  throw new LiveSyncEntitlementError();
+}
+
+/**
  * DB-level gate before any paid upstream provider call.
  * Burns one scan credit unless an unlimited window (pro/fleet) is active.
  */
