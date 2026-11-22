@@ -205,15 +205,18 @@ export function assertStrictIndianVehicleNumber(raw: unknown): string {
 // ---------------------------------------------------------------------------
 
 export function clientIpFromRequest(req: Request): string {
-  const forwarded = req.headers.get('x-forwarded-for');
-  if (forwarded) {
-    const first = forwarded.split(',')[0]?.trim();
-    if (first) return first.slice(0, 128);
-  }
-  const realIp = req.headers.get('x-real-ip')?.trim();
-  if (realIp) return realIp.slice(0, 128);
+  // Prefer platform-injected IPs; never trust first XFF hop alone (spoofable).
   const cf = req.headers.get('cf-connecting-ip')?.trim();
   if (cf) return cf.slice(0, 128);
+  const realIp = req.headers.get('x-real-ip')?.trim();
+  if (realIp) return realIp.slice(0, 128);
+  const forwarded = req.headers.get('x-forwarded-for');
+  if (forwarded) {
+    const parts = forwarded.split(',').map((p) => p.trim()).filter(Boolean);
+    // Right-most hop is typically the closest trusted proxy edge.
+    const last = parts[parts.length - 1];
+    if (last) return last.slice(0, 128);
+  }
   return 'unknown';
 }
 

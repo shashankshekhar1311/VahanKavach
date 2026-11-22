@@ -135,7 +135,9 @@ export function GarageDashboard() {
 
     const { data: vehicleRows, error: vehicleError } = await supabase
       .from("vehicles")
-      .select("*")
+      .select(
+        "id, user_id, reg_number, maker_model, fuel_type, puc_expiry_date, insurance_expiry_date, fitness_expiry_date, fastag_status, fastag_bank, last_polled_at, cached_until, is_verified_owner, rc_mobile_linked, rc_aadhaar_linked, rc_contact_warning, created_at",
+      )
       .eq("user_id", user.id)
       .order("created_at", { ascending: true });
 
@@ -145,7 +147,12 @@ export function GarageDashboard() {
       return;
     }
 
-    const list = (vehicleRows ?? []) as Vehicle[];
+    // Never select chassis/engine last-5 over PostgREST — keep client payloads redacted.
+    const list: Vehicle[] = (vehicleRows ?? []).map((row) => ({
+      ...(row as Omit<Vehicle, "chassis_last_5" | "engine_last_5">),
+      chassis_last_5: null,
+      engine_last_5: null,
+    }));
     if (list.length === 0) {
       setVehicles([]);
       setLoading(false);
@@ -191,6 +198,8 @@ export function GarageDashboard() {
         forceRefresh: options.forceRefresh ?? false,
         mode: options.mode,
         chassisLast5: options.chassisLast5,
+        consentAccepted: options.mode === "claim" || Boolean(options.chassisLast5),
+        consentTextVersion: CONSENT_TEXT_VERSION,
       },
     });
 

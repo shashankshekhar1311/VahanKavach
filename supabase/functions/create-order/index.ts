@@ -290,10 +290,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   } catch (err) {
     console.error('create-order', err);
     return jsonResponse(
-      {
-        success: false,
-        error: err instanceof Error ? err.message : 'Internal error',
-      } satisfies ApiResponse<never>,
+      { success: false, error: 'Internal error' } satisfies ApiResponse<never>,
       500,
     );
   }

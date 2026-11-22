@@ -119,10 +119,22 @@ async function extractPayload(
   headers: Headers,
   isStaging: boolean,
 ): Promise<{ ok: true } & SmsPayload | { ok: false; reason: string }> {
-  const relaxed =
-    isStaging ||
+  const envName = (Deno.env.get('ENVIRONMENT') ?? '').toLowerCase();
+  const isHosted = envName === 'production' || envName === 'prod' || envName === 'staging';
+  const relaxedRequested =
     (Deno.env.get('SEND_SMS_HOOK_RELAXED') ?? '').toLowerCase() === 'true';
+  // Never allow unsigned hooks on hosted projects (staging or production).
+  const relaxed = !isHosted && (isStaging || relaxedRequested);
   const hookSecretRaw = Deno.env.get('SEND_SMS_HOOK_SECRET')?.trim();
+
+  if (!hookSecretRaw) {
+    if (isHosted) {
+      return {
+        ok: false,
+        reason: 'SEND_SMS_HOOK_SECRET is required on hosted environments',
+      };
+    }
+  }
 
   if (!hookSecretRaw || relaxed) {
     try {

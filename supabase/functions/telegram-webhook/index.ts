@@ -83,9 +83,22 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   const expectedSecret = Deno.env.get('TELEGRAM_WEBHOOK_SECRET')?.trim();
+  const envName = (Deno.env.get('ENVIRONMENT') ?? '').toLowerCase();
+  const isHosted = envName === 'production' || envName === 'prod' || envName === 'staging';
+  if (isHosted && !expectedSecret) {
+    console.error('TELEGRAM_WEBHOOK_SECRET unset — refusing hosted webhook');
+    return new Response('Webhook misconfigured', { status: 503 });
+  }
   if (expectedSecret) {
     const provided = req.headers.get('X-Telegram-Bot-Api-Secret-Token')?.trim() ?? '';
-    if (provided !== expectedSecret) {
+    if (provided.length !== expectedSecret.length) {
+      return new Response('Forbidden', { status: 403 });
+    }
+    let mismatch = 0;
+    for (let i = 0; i < expectedSecret.length; i++) {
+      mismatch |= expectedSecret.charCodeAt(i) ^ provided.charCodeAt(i);
+    }
+    if (mismatch !== 0) {
       console.warn('Rejected Telegram webhook: invalid secret token');
       return new Response('Forbidden', { status: 403 });
     }

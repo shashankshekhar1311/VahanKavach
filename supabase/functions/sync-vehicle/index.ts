@@ -86,6 +86,10 @@ const RequestSchema = z
     mode: z.enum(['claim', 'refresh']).optional(),
     chassisLast5: z.string().optional(),
     chassis_last5: z.string().optional(),
+    consentAccepted: z.boolean().optional(),
+    consent_accepted: z.boolean().optional(),
+    consentTextVersion: z.string().optional(),
+    consent_text_version: z.string().optional(),
   })
   .refine((d) => Boolean(d.regNumber?.trim() || d.reg_number?.trim()), {
     message: 'regNumber is required',
@@ -362,6 +366,21 @@ Deno.serve(async (req: Request): Promise<Response> => {
       );
     }
 
+    const consentAccepted =
+      parsed.data.consentAccepted === true ||
+      parsed.data.consent_accepted === true;
+    if (!consentAccepted) {
+      return jsonResponse(
+        {
+          success: false,
+          error:
+            'DPDP consent is required before processing vehicle personal data. Accept the consent checkbox and try again.',
+          data: { code: 'CONSENT_REQUIRED' },
+        } as ApiResponse<{ code: string }>,
+        403,
+      );
+    }
+
     const claimGate = await assertCanClaimVehicle(admin, user.id);
     if (!claimGate.ok) {
       return jsonResponse(
@@ -445,6 +464,30 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     // Chassis verified: fetch challans, persist, THEN consume credit (zero-leakage).
     await recordClaimAttempt(admin, user.id, regNumber, chassisSubmitted, 'verified');
+
+    const consentVersion =
+      parsed.data.consentTextVersion?.trim() ||
+      parsed.data.consent_text_version?.trim() ||
+      'dpdp-vehicle-v1';
+    const { error: consentErr } = await admin.from('consent_audit_logs').insert({
+      user_id: user.id,
+      vehicle_id: vehicleRow.id,
+      purpose: 'VEHICLE_RC_PROCESSING',
+      consent_text_version: consentVersion,
+      ip_address: ip !== 'unknown' ? ip : null,
+      user_agent: userAgent,
+    });
+    if (consentErr) {
+      console.error('consent_audit_logs insert failed', consentErr.message);
+      return jsonResponse(
+        {
+          success: false,
+          error: 'Could not record consent. Try Protect again.',
+          data: { code: 'CONSENT_RECORD_FAILED' },
+        } as ApiResponse<{ code: string }>,
+        500,
+      );
+    }
 
     const upstreamChallans = await provider.getPendingChallans(
       regNumber,

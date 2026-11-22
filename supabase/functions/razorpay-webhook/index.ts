@@ -142,7 +142,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         return jsonResponse({ success: true, data: { skipped: 'missing_order_id' } });
       }
 
-      if (currency && currency !== 'INR') {
+      if (currency !== 'INR') {
         console.error('razorpay-webhook currency rejected', { currency, orderId });
         return jsonResponse({
           success: true,
@@ -163,7 +163,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         orderId,
         paymentId,
         paidPaise,
-        currency || 'INR',
+        'INR',
       );
       if (planPayment.matched) {
         return jsonResponse({ success: true, data: planPayment });
@@ -243,7 +243,8 @@ function expectedPaiseForTier(
 function amountMatchesExpected(paidPaise: number, expectedPaise: number): boolean {
   if (!Number.isFinite(paidPaise) || paidPaise <= 0) return false;
   if (!Number.isFinite(expectedPaise) || expectedPaise <= 0) return false;
-  return Math.abs(paidPaise - expectedPaise) <= 1;
+  // INR paise are integers — require exact match.
+  return paidPaise === expectedPaise;
 }
 
 async function activatePlanPayment(

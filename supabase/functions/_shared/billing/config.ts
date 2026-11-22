@@ -49,6 +49,8 @@ export function entitledCacheTtlMs(): number {
 }
 
 export function billingMockEnabled(): boolean {
+  const envName = (Deno.env.get('ENVIRONMENT') ?? '').toLowerCase();
+  if (envName === 'production' || envName === 'prod') return false;
   return (Deno.env.get('BILLING_MOCK') ?? '').toLowerCase() === 'true';
 }
 

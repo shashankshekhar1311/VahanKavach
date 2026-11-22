@@ -38,6 +38,8 @@ export function proAmountRupees(vehicleQty: number): number {
 }
 
 export function proMockEnabled(): boolean {
+  const envName = (Deno.env.get('ENVIRONMENT') ?? '').toLowerCase();
+  if (envName === 'production' || envName === 'prod') return false;
   const v = (Deno.env.get('BILLING_MOCK') ?? '').toLowerCase();
   return v === 'true' || v === '1' || v === 'yes';
 }

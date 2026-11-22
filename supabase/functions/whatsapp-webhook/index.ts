@@ -135,15 +135,20 @@ async function handleWebhookPost(req: Request): Promise<Response> {
   const signatureHeader = req.headers.get('x-hub-signature-256');
   const appSecret = Deno.env.get('META_APP_SECRET');
 
-  if (appSecret) {
+  const envName = (Deno.env.get('ENVIRONMENT') ?? '').toLowerCase();
+  const isHosted = envName === 'production' || envName === 'prod' || envName === 'staging';
+  if (!appSecret) {
+    if (isHosted) {
+      console.error('META_APP_SECRET unset — refusing hosted WhatsApp webhook');
+      return new Response('Webhook misconfigured', { status: 503 });
+    }
+    console.warn('META_APP_SECRET unset; skipping HMAC verification (local only)');
+  } else {
     const valid = await verifyMetaSignature(rawBody, signatureHeader, appSecret);
     if (!valid) {
       console.warn('Rejected WhatsApp webhook: invalid HMAC signature');
       return new Response('Forbidden', { status: 403 });
     }
-  } else {
-    // Local/dev only — production must set META_APP_SECRET.
-    console.warn('META_APP_SECRET unset; skipping HMAC verification');
   }
 
   let payload: unknown;

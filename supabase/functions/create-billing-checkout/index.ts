@@ -323,10 +323,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     console.error('create-billing-checkout', err);
 
     return jsonResponse(
-      {
-        success: false,
-        error: err instanceof Error ? err.message : 'Internal error',
-      } satisfies ApiResponse<never>,
+      { success: false, error: 'Internal error' } satisfies ApiResponse<never>,
       500,
     );
   }

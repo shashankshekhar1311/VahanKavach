@@ -1,11 +1,9 @@
 /**
  * health — production readiness probe.
  *
- * Checks: Postgres connectivity, pg_cron-backed job artefacts, upstream latency.
- * verify_jwt = false (uptime monitors / deploy smoke tests).
- *
- * Healthy response data:
- *   { status: 'healthy', version: '1.0.0', timestamp: ISO8601 }
+ * Public response is minimal (status/version/timestamp only).
+ * Detailed checks require header x-health-secret === HEALTH_PROBE_SECRET.
+ * verify_jwt = false (uptime monitors).
  */
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -34,80 +32,99 @@ type HealthData = {
   checks?: {
     database: CheckResult;
     pg_cron: CheckResult;
-    provider: CheckResult & { mode: VehicleProviderMode };
+    provider: CheckResult & { mode?: VehicleProviderMode };
   };
 };
 
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let out = 0;
+  for (let i = 0; i < a.length; i++) out |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return out === 0;
+}
+
 Deno.serve(async (req: Request): Promise<Response> => {
-  if (req.method === 'OPTIONS') return optionsResponse();
+  if (req.method === 'OPTIONS') return optionsResponse(req);
   if (req.method !== 'GET' && req.method !== 'POST') {
     return jsonResponse(
       { success: false, error: 'Method not allowed' } satisfies ApiResponse<never>,
       405,
+      {},
+      req,
     );
   }
 
   const timestamp = new Date().toISOString();
-  const mode = resolveVehicleProviderMode();
+  const probeSecret = Deno.env.get('HEALTH_PROBE_SECRET')?.trim() ?? '';
+  const provided = req.headers.get('x-health-secret')?.trim() ?? '';
+  const detailed = Boolean(probeSecret) && timingSafeEqual(probeSecret, provided);
 
   const database = await checkDatabase();
+  const status: HealthData['status'] = database.ok ? 'healthy' : 'unhealthy';
+
+  if (!detailed) {
+    return jsonResponse(
+      {
+        success: database.ok,
+        data: {
+          status,
+          version: APP_VERSION,
+          timestamp,
+        } satisfies HealthData,
+      } satisfies ApiResponse<HealthData>,
+      database.ok ? 200 : 503,
+      {},
+      req,
+    );
+  }
+
+  const mode = resolveVehicleProviderMode();
   const pgCron = await checkPgCron(database.admin);
   const provider = await checkProvider(mode);
-
   const checks = {
-    database: { ok: database.ok, detail: database.detail },
-    pg_cron: pgCron,
-    provider: { ...provider, mode },
+    database: {
+      ok: database.ok,
+      detail: database.ok ? 'ok' : 'unreachable',
+    },
+    pg_cron: { ok: pgCron.ok, detail: pgCron.ok ? 'ok' : 'degraded' },
+    provider: {
+      ok: provider.ok,
+      latencyMs: provider.latencyMs,
+      mode,
+    },
   };
 
   const allOk = database.ok && pgCron.ok && provider.ok;
-  const status: HealthData['status'] = !database.ok
+  const detailedStatus: HealthData['status'] = !database.ok
     ? 'unhealthy'
     : allOk
-    ? 'healthy'
-    : 'degraded';
-
-  if (status === 'healthy') {
-    return jsonResponse({
-      success: true,
-      data: {
-        status: 'healthy',
-        version: APP_VERSION,
-        timestamp,
-        checks,
-      } satisfies HealthData,
-    } satisfies ApiResponse<HealthData>);
-  }
+      ? 'healthy'
+      : 'degraded';
 
   return jsonResponse(
     {
-      success: false,
-      error: `Service ${status}`,
+      success: detailedStatus !== 'unhealthy',
       data: {
-        status,
+        status: detailedStatus,
         version: APP_VERSION,
         timestamp,
         checks,
       } satisfies HealthData,
     } as Record<string, unknown>,
-    status === 'unhealthy' ? 503 : 200,
+    detailedStatus === 'unhealthy' ? 503 : 200,
+    {},
+    req,
   );
 });
 
-
 async function checkDatabase(): Promise<{
   ok: boolean;
-  detail?: string;
   admin: SupabaseClient | null;
 }> {
   const supabaseUrl = Deno.env.get('SUPABASE_URL');
   const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
   if (!supabaseUrl || !serviceKey) {
-    return {
-      ok: false,
-      detail: 'SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing',
-      admin: null,
-    };
+    return { ok: false, admin: null };
   }
 
   const admin = createClient(supabaseUrl, serviceKey, {
@@ -116,61 +133,30 @@ async function checkDatabase(): Promise<{
 
   const { error } = await admin.from('profiles').select('id').limit(1);
   if (error) {
-    return { ok: false, detail: error.message, admin };
+    console.error('health db', error.message);
+    return { ok: false, admin };
   }
-  return { ok: true, detail: 'profiles reachable', admin };
+  return { ok: true, admin };
 }
 
-/**
- * pg_cron schema is not exposed via PostgREST; verify artefacts that require
- * pg_cron (audit 180-day job + PUC daily job migrations).
- */
 async function checkPgCron(admin: SupabaseClient | null): Promise<CheckResult> {
   if (!admin) return { ok: false, detail: 'no db client' };
-
-  const { error: auditErr } = await admin.from('audit_logs').select('id').limit(1);
-  if (auditErr) {
-    return {
-      ok: false,
-      detail: `audit_logs missing (180-day retention cron depends on it): ${auditErr.message}`,
-    };
+  const { error } = await admin.from('audit_logs').select('id').limit(1);
+  if (error) {
+    console.error('health pg_cron artefact', error.message);
+    return { ok: false };
   }
-
-  const { error: pucErr } = await admin
-    .from('puc_alert_dispatches')
-    .select('id')
-    .limit(1);
-
-  if (pucErr) {
-    return {
-      ok: true,
-      detail:
-        'audit retention artefacts ok; puc_alert_dispatches not found (partial cron setup)',
-    };
-  }
-
-  return {
-    ok: true,
-    detail: 'pg_cron-backed tables present (audit retention + puc alerts)',
-  };
+  return { ok: true };
 }
 
 async function checkProvider(mode: VehicleProviderMode): Promise<CheckResult> {
-  if (mode === 'MOCK') {
-    return { ok: true, detail: 'MOCK mode — no upstream probe', latencyMs: 0 };
-  }
-
   const url = providerProbeUrl(mode);
-  if (!url) {
-    return { ok: false, detail: 'no probe URL for provider mode' };
+  if (!url) return { ok: true, latencyMs: 0, detail: 'mock' };
+  try {
+    const latencyMs = await probeUpstreamLatency(url);
+    return { ok: latencyMs != null && latencyMs < 5000, latencyMs };
+  } catch (err) {
+    console.error('health provider', err);
+    return { ok: false, latencyMs: null };
   }
-
-  const probe = await probeUpstreamLatency(url);
-  return {
-    ok: probe.ok,
-    detail: probe.ok
-      ? `upstream reachable (HTTP ${probe.status ?? 'n/a'})`
-      : 'upstream probe failed or timed out',
-    latencyMs: probe.latencyMs,
-  };
 }

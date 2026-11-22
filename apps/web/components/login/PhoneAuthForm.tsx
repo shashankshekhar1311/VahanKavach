@@ -25,6 +25,10 @@ function isValidEmail(raw: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw.trim());
 }
 
+const allowStagingSandbox =
+  process.env.NEXT_PUBLIC_ENVIRONMENT === "staging" ||
+  process.env.NEXT_PUBLIC_ENABLE_SANDBOX_LOGIN === "true";
+
 export function PhoneAuthForm() {
   const router = useRouter();
   const turnstileRef = useRef<TurnstileInstance | undefined>(undefined);
@@ -194,8 +198,12 @@ export function PhoneAuthForm() {
     router.replace("/dashboard");
   }
 
-  /** Staging sandbox password login when SMTP / SMS hook is unavailable. */
+  /** Staging-only sandbox password login when SMTP / SMS hook is unavailable. */
   async function demoLogin() {
+    if (!allowStagingSandbox) {
+      setError("Sandbox login is disabled outside staging.");
+      return;
+    }
     if (captchaRequired && !captchaToken) {
       setError("Complete the CAPTCHA check before continuing.");
       return;
@@ -204,9 +212,15 @@ export function PhoneAuthForm() {
     setBusy(true);
     setError(null);
     try {
+      const sandboxPassword =
+        process.env.NEXT_PUBLIC_STAGING_SANDBOX_PASSWORD?.trim() ?? "";
+      if (!sandboxPassword) {
+        setError("Staging sandbox password is not configured.");
+        return;
+      }
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email: "sandbox@vahankavach.test",
-        password: "SandboxTest123!",
+        password: sandboxPassword,
         ...(captchaToken
           ? { options: { captchaToken } }
           : {}),
@@ -388,17 +402,21 @@ export function PhoneAuthForm() {
             {channel === "email" ? "Send email OTP" : "Send SMS OTP"}
           </button>
 
-          <button
-            type="button"
-            onClick={demoLogin}
-            disabled={busy || captchaBlocking}
-            className="w-full rounded-xl border border-zinc-700 bg-zinc-900/80 py-3 text-xs font-medium text-zinc-200 transition hover:border-safety/50 hover:text-safety disabled:opacity-50"
-          >
-            Continue with staging sandbox account
-          </button>
-          <p className="text-center text-[11px] text-zinc-600">
-            sandbox@vahankavach.test · use when email/SMS OTP is down
-          </p>
+          {allowStagingSandbox ? (
+            <>
+              <button
+                type="button"
+                onClick={demoLogin}
+                disabled={busy || captchaBlocking}
+                className="w-full rounded-xl border border-zinc-700 bg-zinc-900/80 py-3 text-xs font-medium text-zinc-200 transition hover:border-safety/50 hover:text-safety disabled:opacity-50"
+              >
+                Continue with staging sandbox account
+              </button>
+              <p className="text-center text-[11px] text-zinc-600">
+                Staging only · use when email/SMS OTP is down
+              </p>
+            </>
+          ) : null}
         </form>
       ) : (
         <form onSubmit={verifyOtp} className="space-y-4">

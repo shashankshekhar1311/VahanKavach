@@ -2,8 +2,8 @@
  * verify-order — client-side Razorpay Checkout payment verification for Kavach Pro.
  *
  * Body: { orderId, paymentId, signature }
- * Validates HMAC(orderId|paymentId, RAZORPAY_KEY_SECRET), marks order SUCCESS,
- * sets profiles.is_pro = true.
+ * Validates HMAC(orderId|paymentId, RAZORPAY_KEY_SECRET), claims order once,
+ * activates Pro only on first successful claim (no replay extend).
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -16,7 +16,6 @@ import { verifyCheckoutPaymentSignature } from '../_shared/billing/razorpay.ts';
 import { jsonResponse, optionsResponse } from '../_shared/cors.ts';
 import type { ApiResponse } from '../_shared/types.ts';
 
-
 const RequestSchema = z.object({
   orderId: z.string().min(1),
   paymentId: z.string().min(1),
@@ -24,11 +23,13 @@ const RequestSchema = z.object({
 });
 
 Deno.serve(async (req: Request): Promise<Response> => {
-  if (req.method === 'OPTIONS') return optionsResponse();
+  if (req.method === 'OPTIONS') return optionsResponse(req);
   if (req.method !== 'POST') {
     return jsonResponse(
       { success: false, error: 'Method not allowed' } satisfies ApiResponse<never>,
       405,
+      {},
+      req,
     );
   }
 
@@ -38,6 +39,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return jsonResponse(
         { success: false, error: 'Unauthorized' } satisfies ApiResponse<never>,
         401,
+        {},
+        req,
       );
     }
 
@@ -49,6 +52,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return jsonResponse(
         { success: false, error: 'Server misconfiguration' } satisfies ApiResponse<never>,
         500,
+        {},
+        req,
       );
     }
 
@@ -64,6 +69,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return jsonResponse(
         { success: false, error: 'Unauthorized' } satisfies ApiResponse<never>,
         401,
+        {},
+        req,
       );
     }
 
@@ -76,6 +83,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
           error: 'Expected { orderId, paymentId, signature }',
         } satisfies ApiResponse<never>,
         400,
+        {},
+        req,
       );
     }
 
@@ -83,8 +92,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     if (!keySecret) {
       return jsonResponse(
-        { success: false, error: 'RAZORPAY_KEY_SECRET not configured' } satisfies ApiResponse<never>,
+        { success: false, error: 'Payment verification unavailable' } satisfies ApiResponse<never>,
         503,
+        {},
+        req,
       );
     }
 
@@ -98,6 +109,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return jsonResponse(
         { success: false, error: 'Invalid payment signature' } satisfies ApiResponse<never>,
         400,
+        {},
+        req,
       );
     }
 
@@ -117,26 +130,65 @@ Deno.serve(async (req: Request): Promise<Response> => {
       return jsonResponse(
         { success: false, error: 'Order not found' } satisfies ApiResponse<never>,
         404,
+        {},
+        req,
       );
     }
-
-    const alreadyPaid = order.status === 'SUCCESS';
-
-    const { error: updErr } = await admin
-      .from('orders')
-      .update({
-        status: 'SUCCESS',
-        razorpay_payment_id: paymentId,
-        razorpay_signature: signature,
-      })
-      .eq('id', order.id);
-    if (updErr) throw new Error(updErr.message);
 
     const amountRupees = Number(order.amount) || ANNUAL_PREPAID_RUPEES_PER_VEHICLE;
     const vehicleQty = Math.max(
       1,
       Math.round(amountRupees / ANNUAL_PREPAID_RUPEES_PER_VEHICLE),
     );
+
+    // Atomic claim: only first SUCCESS transition activates entitlements.
+    const { data: claimed, error: claimErr } = await admin.rpc('claim_order_paid', {
+      p_order_id: order.id,
+      p_razorpay_payment_id: paymentId,
+    });
+
+    if (claimErr) {
+      const { data: updRows, error: updErr } = await admin
+        .from('orders')
+        .update({
+          status: 'SUCCESS',
+          razorpay_payment_id: paymentId,
+          razorpay_signature: signature,
+        })
+        .eq('id', order.id)
+        .neq('status', 'SUCCESS')
+        .select('id');
+      if (updErr) throw new Error(updErr.message);
+      if (!updRows || updRows.length === 0) {
+        return jsonResponse({
+          success: true,
+          data: {
+            isPro: true,
+            orderId,
+            paymentId,
+            vehicleQty,
+            alreadyPaid: true,
+          },
+        }, 200, {}, req);
+      }
+    } else if (!claimed) {
+      return jsonResponse({
+        success: true,
+        data: {
+          isPro: true,
+          orderId,
+          paymentId,
+          vehicleQty,
+          alreadyPaid: true,
+        },
+      }, 200, {}, req);
+    } else {
+      await admin
+        .from('orders')
+        .update({ razorpay_signature: signature })
+        .eq('id', order.id);
+    }
+
     const activated = await activatePaidPeriod(
       admin,
       user.id,
@@ -153,14 +205,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .maybeSingle();
 
     if (planPay?.id) {
-      await markPaymentSuccessful(admin, planPay.id as string, paymentId, signature);
+      await markPaymentSuccessful(
+        admin,
+        planPay.id as string,
+        paymentId,
+        signature,
+      );
     }
 
-    const { error: proErr } = await admin
-      .from('profiles')
-      .update({ is_pro: true })
-      .eq('id', user.id);
-    if (proErr) throw new Error(proErr.message);
+    await admin.from('profiles').update({ is_pro: true }).eq('id', user.id);
 
     return jsonResponse({
       success: true,
@@ -170,18 +223,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
         paymentId,
         vehicleQty,
         periodEnd: activated.periodEnd,
-        alreadyPaid,
+        alreadyPaid: false,
       },
-    });
+    }, 200, {}, req);
   } catch (err) {
-
     console.error('verify-order', err);
     return jsonResponse(
-      {
-        success: false,
-        error: err instanceof Error ? err.message : 'Internal error',
-      } satisfies ApiResponse<never>,
+      { success: false, error: 'Internal error' } satisfies ApiResponse<never>,
       500,
+      {},
+      req,
     );
   }
 });
