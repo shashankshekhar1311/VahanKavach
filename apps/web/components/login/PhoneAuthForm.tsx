@@ -29,6 +29,12 @@ const allowStagingSandbox =
   process.env.NEXT_PUBLIC_ENVIRONMENT === "staging" ||
   process.env.NEXT_PUBLIC_ENABLE_SANDBOX_LOGIN === "true";
 
+/**
+ * Invite-only beta: set NEXT_PUBLIC_INVITE_ONLY=true in Cloudflare Pages env
+ * AND disable Auth → “Allow new users to sign up”. OTP then never auto-creates users.
+ */
+const inviteOnlyAuth = process.env.NEXT_PUBLIC_INVITE_ONLY === "true";
+
 export function PhoneAuthForm() {
   const router = useRouter();
   const turnstileRef = useRef<TurnstileInstance | undefined>(undefined);
@@ -83,7 +89,8 @@ export function PhoneAuthForm() {
         const { error: otpError } = await supabase.auth.signInWithOtp({
           email: normalized,
           options: {
-            shouldCreateUser: true,
+            // Invite-only / signup-disabled: never auto-create auth.users rows.
+            shouldCreateUser: !inviteOnlyAuth,
             ...(captchaToken ? { captchaToken } : {}),
           },
         });
@@ -120,7 +127,7 @@ export function PhoneAuthForm() {
       const { error: otpError } = await supabase.auth.signInWithOtp({
         phone,
         options: {
-          shouldCreateUser: true,
+          shouldCreateUser: !inviteOnlyAuth,
           ...(captchaToken ? { captchaToken } : {}),
         },
       });
@@ -239,6 +246,16 @@ export function PhoneAuthForm() {
 
   function friendlyOtpError(message: string): string {
     const lower = message.toLowerCase();
+    if (
+      lower.includes("signups not allowed") ||
+      lower.includes("signup is disabled") ||
+      lower.includes("sign up is disabled") ||
+      lower.includes("user not found") ||
+      lower.includes("user_not_found") ||
+      (lower.includes("invite") && lower.includes("only"))
+    ) {
+      return "This account is not on the beta invite list. Ask the VahanKavach team to invite your email, then try again.";
+    }
     if (
       lower.includes("confirmation email") ||
       lower.includes("error sending") ||
