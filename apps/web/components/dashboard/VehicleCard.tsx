@@ -6,9 +6,12 @@ import {
   Car,
   CheckCircle2,
   ExternalLink,
+  FileWarning,
   MoreVertical,
   RefreshCw,
+  ShieldCheck,
   Unlink,
+  Wind,
 } from "lucide-react";
 import type { Challan, Vehicle } from "@/lib/types";
 import { formatRegDisplay } from "@/lib/registration";
@@ -27,6 +30,8 @@ interface VehicleCardProps {
   onViewChallans: (vehicle: Vehicle) => void;
 }
 
+type ComplianceTone = "ok" | "warn" | "bad" | "unknown";
+
 function formatLongDate(dateIso: string | null): string | null {
   if (!dateIso) return null;
   const d = new Date(`${dateIso.slice(0, 10)}T00:00:00`);
@@ -38,48 +43,73 @@ function formatLongDate(dateIso: string | null): string | null {
   });
 }
 
-/** Fill 0–1 for PUC validity bar (demo-style). */
-function pucBarFill(days: number | null): number {
-  if (days === null) return 0;
-  if (days <= 0) return 0.06;
-  return Math.min(1, Math.max(0.12, days / 180));
+function toneFromDays(days: number | null): ComplianceTone {
+  if (days === null) return "unknown";
+  const level = pucLevel(days);
+  if (level === "green") return "ok";
+  if (level === "amber") return "warn";
+  return "bad";
 }
 
-function pucBadge(days: number | null): {
-  label: string;
-  className: string;
+function expiryStatus(days: number | null): {
+  tone: ComplianceTone;
+  badge: string;
+  detail: string;
 } {
-  const level = pucLevel(days);
+  const tone = toneFromDays(days);
   if (days === null) {
-    return {
-      label: "PUC N/A",
-      className: "border-zinc-600 text-zinc-400",
-    };
+    return { tone, badge: "N/A", detail: "Not available yet" };
   }
-  if (level === "green") {
-    return {
-      label: "PUC VALID",
-      className: "border-safety/50 text-safety",
-    };
+  if (days <= 0) {
+    return { tone, badge: "EXPIRED", detail: "Renew now" };
   }
-  if (level === "amber") {
-    return {
-      label: "PUC SOON",
-      className: "border-amber-warn/50 text-amber-warn",
-    };
+  if (days <= 15) {
+    return { tone, badge: "SOON", detail: `${days}d left` };
   }
-  return {
-    label: "PUC EXPIRED",
-    className: "border-emergency/50 text-emergency",
-  };
+  return { tone, badge: "VALID", detail: `${days}d left` };
 }
 
-function barColor(days: number | null): string {
-  const level = pucLevel(days);
-  if (level === "green") return "bg-safety";
-  if (level === "amber") return "bg-amber-warn";
-  if (days === null) return "bg-zinc-600";
-  return "bg-emergency";
+function toneClasses(tone: ComplianceTone): {
+  shell: string;
+  badge: string;
+  label: string;
+  meta: string;
+  icon: string;
+} {
+  switch (tone) {
+    case "ok":
+      return {
+        shell: "border-safety/35 bg-safety/5",
+        badge: "border-safety/50 text-safety",
+        label: "text-zinc-200",
+        meta: "text-zinc-400",
+        icon: "text-safety",
+      };
+    case "warn":
+      return {
+        shell: "border-amber-warn/40 bg-amber-warn/10",
+        badge: "border-amber-warn/50 text-amber-warn",
+        label: "text-amber-100",
+        meta: "text-amber-100/70",
+        icon: "text-amber-warn",
+      };
+    case "bad":
+      return {
+        shell: "border-emergency/40 bg-emergency/10",
+        badge: "border-emergency/50 text-emergency",
+        label: "text-red-100",
+        meta: "text-red-100/70",
+        icon: "text-emergency",
+      };
+    default:
+      return {
+        shell: "border-zinc-700 bg-zinc-950/60",
+        badge: "border-zinc-600 text-zinc-400",
+        label: "text-zinc-300",
+        meta: "text-zinc-500",
+        icon: "text-zinc-500",
+      };
+  }
 }
 
 export function VehicleCard({
@@ -96,9 +126,12 @@ export function VehicleCard({
   const totalAmount = unpaid.reduce((s, c) => s + Number(c.amount), 0);
   const pucDays = daysUntil(vehicle.puc_expiry_date);
   const insuranceDays = daysUntil(vehicle.insurance_expiry_date);
-  const badge = pucBadge(pucDays);
-  const fill = pucBarFill(pucDays);
+  const puc = expiryStatus(pucDays);
+  const insurance = expiryStatus(insuranceDays);
+  const pucTone = toneClasses(puc.tone);
+  const insuranceTone = toneClasses(insurance.tone);
   const pucUntil = formatLongDate(vehicle.puc_expiry_date);
+  const insuranceUntil = formatLongDate(vehicle.insurance_expiry_date);
   const title = vehicle.maker_model?.trim() || "Vehicle";
   const [menuOpen, setMenuOpen] = useState(false);
   const [rcModalOpen, setRcModalOpen] = useState(false);
@@ -187,26 +220,11 @@ export function VehicleCard({
             </div>
           </div>
 
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {vehicle.fuel_type ? (
-              <span className="text-[11px] text-zinc-500">
-                {vehicle.fuel_type}
-              </span>
-            ) : null}
-            {insuranceDays !== null ? (
-              <span className="text-[11px] text-zinc-500">
-                Ins ·{" "}
-                {insuranceDays < 0
-                  ? "expired"
-                  : `${insuranceDays}d left`}
-              </span>
-            ) : null}
-            <span
-              className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${badge.className}`}
-            >
-              {badge.label}
-            </span>
-          </div>
+          {vehicle.fuel_type ? (
+            <p className="mt-1.5 text-[11px] uppercase tracking-wide text-zinc-500">
+              {vehicle.fuel_type}
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -235,51 +253,100 @@ export function VehicleCard({
         </div>
       ) : null}
 
-      {/* PUC validity bar */}
-      <div className="mt-4">
-        <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
-          <div
-            className={`h-full rounded-full transition-all duration-500 ${barColor(pucDays)}`}
-            style={{ width: `${Math.round(fill * 100)}%` }}
-          />
+      {/* Insurance + PUC — equal visual weight */}
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <div
+          className={`rounded-xl border px-3 py-2.5 ${insuranceTone.shell}`}
+          role="status"
+          aria-label={`Insurance ${insurance.badge}`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <span
+              className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide ${insuranceTone.label}`}
+            >
+              <ShieldCheck
+                className={`h-3.5 w-3.5 ${insuranceTone.icon}`}
+                aria-hidden
+              />
+              Insurance
+            </span>
+            <span
+              className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${insuranceTone.badge}`}
+            >
+              {insurance.badge}
+            </span>
+          </div>
+          <p className={`mt-1.5 text-[12px] font-medium ${insuranceTone.label}`}>
+            {insurance.detail}
+          </p>
+          <p className={`mt-0.5 text-[10px] ${insuranceTone.meta}`}>
+            {insuranceUntil ? `Until ${insuranceUntil}` : "Expiry unknown"}
+          </p>
         </div>
-        <p className="mt-1.5 text-[11px] text-zinc-500">
-          {pucUntil
-            ? `PUC valid until ${pucUntil}`
-            : "PUC expiry not available yet"}
-          {pucDays !== null && pucDays > 0 ? (
-            <span className="text-zinc-600"> · {pucDays}d left</span>
-          ) : null}
-          {pucDays !== null && pucDays <= 0 ? (
-            <span className="text-emergency"> · renew now</span>
-          ) : null}
-        </p>
+
+        <div
+          className={`rounded-xl border px-3 py-2.5 ${pucTone.shell}`}
+          role="status"
+          aria-label={`PUC ${puc.badge}`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <span
+              className={`inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide ${pucTone.label}`}
+            >
+              <Wind className={`h-3.5 w-3.5 ${pucTone.icon}`} aria-hidden />
+              PUC
+            </span>
+            <span
+              className={`inline-flex items-center rounded-md border px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide ${pucTone.badge}`}
+            >
+              {puc.badge}
+            </span>
+          </div>
+          <p className={`mt-1.5 text-[12px] font-medium ${pucTone.label}`}>
+            {puc.detail}
+          </p>
+          <p className={`mt-0.5 text-[10px] ${pucTone.meta}`}>
+            {pucUntil ? `Until ${pucUntil}` : "Expiry unknown"}
+          </p>
+        </div>
       </div>
 
-      {/* Challan status footer */}
+      {/* Challan — same status language */}
       {pendingCount > 0 ? (
         <button
           type="button"
           onClick={() => onViewChallans(vehicle)}
-          className="mt-3 flex w-full items-center gap-2 rounded-xl border border-amber-warn/35 bg-amber-warn/10 px-3 py-2.5 text-left transition hover:bg-amber-warn/15"
+          className="mt-2 flex w-full items-center gap-2 rounded-xl border border-amber-warn/40 bg-amber-warn/10 px-3 py-2.5 text-left transition hover:bg-amber-warn/15"
         >
-          <AlertTriangle
+          <FileWarning
             className="h-4 w-4 shrink-0 text-amber-warn"
             aria-hidden
           />
-          <span className="min-w-0 flex-1 text-[12px] font-medium text-amber-100">
-            {pendingCount} unpaid challan{pendingCount === 1 ? "" : "s"} ·{" "}
-            {formatInr(totalAmount)}
+          <span className="min-w-0 flex-1">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-amber-warn">
+              Challan
+            </span>
+            <span className="mt-0.5 block text-[12px] font-medium text-amber-100">
+              {pendingCount} unpaid · {formatInr(totalAmount)}
+            </span>
           </span>
           <span className="shrink-0 text-[11px] font-semibold text-amber-warn">
             View
           </span>
         </button>
       ) : (
-        <div className="mt-3 flex w-full items-center gap-2 rounded-xl border border-safety/25 bg-safety/5 px-3 py-2.5">
+        <div className="mt-2 flex w-full items-center gap-2 rounded-xl border border-safety/35 bg-safety/5 px-3 py-2.5">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-safety" aria-hidden />
-          <span className="text-[12px] font-medium text-safety/90">
-            No unpaid challans
+          <span className="min-w-0 flex-1">
+            <span className="block text-[10px] font-semibold uppercase tracking-wide text-safety">
+              Challan
+            </span>
+            <span className="mt-0.5 block text-[12px] font-medium text-safety/90">
+              No unpaid challans
+            </span>
+          </span>
+          <span className="inline-flex items-center rounded-md border border-safety/50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-safety">
+            Clear
           </span>
         </div>
       )}
